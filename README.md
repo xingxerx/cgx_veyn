@@ -129,12 +129,11 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 
 |Phase|Focus                                                        |
 |-----|-------------------------------------------------------------|
-|0    |Foundation — scaffold, schemas, adapters, mock ✅             |
+|0    |Foundation — scaffold, schemas, adapters, mock ✅            |
 |1    |Mobile health bridge MVP — live biometric stream to daemon   |
 |2    |BLE universal wearable — GATT scan, connect, decode          |
 |3    |Live streaming — WebSocket broadcast, web dashboard          |
 |4    |Plugin system — WASM adapters, community extensions          |
-|5    |AI pipeline integration — Qallow adapter, AGI signal bus     |
 |6    |Cross-device communication — notifications, haptics, gestures|
 
 -----
