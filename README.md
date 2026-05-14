@@ -134,7 +134,7 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 |2    |BLE universal wearable — GATT scan, connect, decode          |
 |3    |Live streaming — WebSocket broadcast, web dashboard          |
 |4    |Plugin system — WASM adapters, community extensions          |
-|6    |Cross-device communication — notifications, haptics, gestures|
+|5    |Cross-device communication — notifications, haptics, gestures|
 
 -----
 
