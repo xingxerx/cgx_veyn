@@ -1,5 +1,3 @@
-# cgx_veyn
-
 # CGX VEYN
 
 **Universal Open Access Bridge for Connected Devices**
