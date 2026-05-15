@@ -4,7 +4,7 @@ use axum::{
         Path, State,
     },
     http::StatusCode,
-    response::{IntoResponse, Json},
+    response::{Html, IntoResponse, Json},
     routing::get,
     Router,
 };
@@ -16,23 +16,31 @@ use veyn_schemas::VeynEvent;
 
 use super::state::AppState;
 
+const DASHBOARD: &str = include_str!("dashboard.html");
+
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/health",           get(health))
-        .route("/events/recent",    get(events_recent))
-        .route("/metrics/:metric",  get(metrics_get))
-        .route("/devices",          get(devices_list))
-        .route("/stream",           get(ws_stream))
+        .route("/",                get(dashboard))
+        .route("/health",          get(health))
+        .route("/events/recent",   get(events_recent))
+        .route("/metrics/:metric", get(metrics_get))
+        .route("/devices",         get(devices_list))
+        .route("/stream",          get(ws_stream))
         .with_state(state)
+}
+
+// GET /
+async fn dashboard() -> Html<&'static str> {
+    Html(DASHBOARD)
 }
 
 // GET /health
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(json!({
-        "status":          "ok",
-        "version":         env!("CARGO_PKG_VERSION"),
-        "uptime_seconds":  state.start_time.elapsed().as_secs(),
-        "events_total":    state.event_count.load(Ordering::Relaxed),
+        "status":         "ok",
+        "version":        env!("CARGO_PKG_VERSION"),
+        "uptime_seconds": state.start_time.elapsed().as_secs(),
+        "events_total":   state.event_count.load(Ordering::Relaxed),
     }))
 }
 
@@ -98,8 +106,29 @@ async fn ws_stream(
 }
 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
+    // Subscribe to the live broadcast before snapshotting history so no
+    // events are lost between the two operations.
     let mut rx = state.broadcast_tx.subscribe();
 
+    // Replay the recent-event ring buffer to the newly connected client.
+    let replay: Vec<VeynEvent> = state
+        .recent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .cloned()
+        .collect();
+
+    for event in &replay {
+        let Ok(json) = serde_json::to_string(event) else {
+            continue;
+        };
+        if socket.send(Message::Text(json.into())).await.is_err() {
+            return;
+        }
+    }
+
+    // Stream live events, interleaved with client ping/close handling.
     loop {
         tokio::select! {
             result = rx.recv() => {
@@ -109,7 +138,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             Ok(j) => j,
                             Err(_) => continue,
                         };
-                        if socket.send(Message::Text(json)).await.is_err() {
+                        if socket.send(Message::Text(json.into())).await.is_err() {
                             break;
                         }
                     }
@@ -120,7 +149,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 }
             }
             msg = socket.recv() => {
-                // Accept ping/pong silently; any error or close terminates the loop
+                // Accept ping/pong silently; any error or close terminates the loop.
                 match msg {
                     Some(Ok(_)) => {}
                     _ => break,

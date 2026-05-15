@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VEYN Live</title>
+  <style>
+    :root {
+      --bg:      #0d0d0f;
+      --card:    #14141a;
+      --border:  #22222d;
+      --accent:  #6366f1;
+      --text:    #e0e0f0;
+      --muted:   #5a5a7a;
+      --green:   #22c55e;
+      --orange:  #f97316;
+      --red:     #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, 'Cascadia Code', 'Courier New', monospace;
+      font-size: 14px;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    h1 {
+      font-size: 1.25rem;
+      letter-spacing: .25em;
+      color: var(--accent);
+    }
+    #status {
+      padding: 2px 12px;
+      border-radius: 999px;
+      font-size: .7rem;
+      letter-spacing: .08em;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      transition: color .2s, border-color .2s;
+    }
+    #status.connected    { color: var(--green);  border-color: var(--green); }
+    #status.reconnecting { color: var(--orange); border-color: var(--orange); }
+    #status.error        { color: var(--red);    border-color: var(--red); }
+
+    /* ── Metric cards ── */
+    #metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 18px;
+      min-width: 130px;
+    }
+    .card-label {
+      font-size: .65rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      margin-bottom: 6px;
+    }
+    .card-value { font-size: 1.5rem; font-weight: 700; }
+    .card-unit  { font-size: .7rem; color: var(--muted); margin-left: 3px; }
+    .card-src   { font-size: .62rem; color: var(--muted); margin-top: 5px; }
+
+    /* ── Feed ── */
+    #feed-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #feed-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    #feed-head h2 {
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+    }
+    #event-count { font-size: .7rem; color: var(--muted); }
+
+    #feed-scroll {
+      max-height: 480px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      position: sticky;
+      top: 0;
+      background: var(--card);
+      padding: 7px 14px;
+      text-align: left;
+      font-size: .65rem;
+      font-weight: normal;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    tbody td {
+      padding: 6px 14px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(99,102,241,.06); }
+    td.val { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .badge {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 4px;
+      font-size: .65rem;
+      background: var(--border);
+      color: var(--muted);
+    }
+    .badge.mock       { color: #a78bfa; }
+    .badge.ble        { color: #38bdf8; }
+    .badge.healthkit  { color: #4ade80; }
+    .badge.eeg        { color: #fb923c; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>VEYN</h1>
+  <span id="status">connecting…</span>
+</header>
+
+<div id="metrics"></div>
+
+<div id="feed-wrap">
+  <div id="feed-head">
+    <h2>Event Feed</h2>
+    <span id="event-count">0 events</span>
+  </div>
+  <div id="feed-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Source</th>
+          <th>Device</th>
+          <th>Metric</th>
+          <th style="text-align:right">Value</th>
+        </tr>
+      </thead>
+      <tbody id="feed-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const MAX_ROWS    = 100;
+  const METRIC_ORDER = [
+    'heart_rate','hrv','spo2','respiratory_rate',
+    'skin_temperature','active_energy','steps','battery'
+  ];
+
+  const statusEl  = document.getElementById('status');
+  const metricsEl = document.getElementById('metrics');
+  const bodyEl    = document.getElementById('feed-body');
+  const countEl   = document.getElementById('event-count');
+
+  let metrics      = {};
+  let totalEvents  = 0;
+  let retryDelay   = 2000;
+
+  // ── status pill ──────────────────────────────────────────
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className   = cls;
+  }
+
+  // ── helpers ──────────────────────────────────────────────
+  function fmt(v) {
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  }
+  function fmtTime(ms) {
+    return new Date(ms).toLocaleTimeString();
+  }
+  function shortId(id) {
+    return id.length > 20 ? id.slice(0, 8) + '…' : id;
+  }
+
+  // ── metric cards ─────────────────────────────────────────
+  function renderMetrics() {
+    const seen = new Set(METRIC_ORDER);
+    const keys = [
+      ...METRIC_ORDER,
+      ...Object.keys(metrics).filter(k => !seen.has(k))
+    ].filter(k => metrics[k]);
+
+    metricsEl.innerHTML = keys.map(k => {
+      const e = metrics[k];
+      return `<div class="card">
+        <div class="card-label">${k.replace(/_/g, ' ')}</div>
+        <div class="card-value">${fmt(e.value)}<span class="card-unit">${e.unit}</span></div>
+        <div class="card-src">${shortId(e.device_id)} · ${e.source}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── feed table ───────────────────────────────────────────
+  function addRow(e) {
+    totalEvents++;
+    countEl.textContent = `${totalEvents} events`;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${fmtTime(e.ts)}</td>
+      <td><span class="badge ${e.source}">${e.source}</span></td>
+      <td>${shortId(e.device_id)}</td>
+      <td>${e.metric.replace(/_/g, ' ')}</td>
+      <td class="val">${fmt(e.value)} <span style="color:var(--muted)">${e.unit}</span></td>
+    `;
+    bodyEl.insertBefore(tr, bodyEl.firstChild);
+    while (bodyEl.rows.length > MAX_ROWS) {
+      bodyEl.deleteRow(bodyEl.rows.length - 1);
+    }
+  }
+
+  function handleEvent(e) {
+    metrics[e.metric] = e;
+    renderMetrics();
+    addRow(e);
+  }
+
+  // ── WebSocket with exponential-backoff reconnect ─────────
+  function connect() {
+    setStatus('connecting…', '');
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws    = new WebSocket(`${proto}//${location.host}/stream`);
+
+    ws.onopen = () => {
+      setStatus('connected', 'connected');
+      retryDelay = 2000;
+    };
+
+    ws.onmessage = ev => {
+      try { handleEvent(JSON.parse(ev.data)); } catch {}
+    };
+
+    ws.onclose = () => {
+      setStatus('reconnecting…', 'reconnecting');
+      setTimeout(connect, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 30000);
+    };
+
+    ws.onerror = () => setStatus('error', 'error');
+  }
+
+  connect();
+</script>
+</body>
+</html>
