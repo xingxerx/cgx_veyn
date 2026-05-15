@@ -14,6 +14,8 @@ pub struct Config {
     pub osc_port: u16,
     /// Path for the append-only JSONL event log (VEYN_LOG)
     pub jsonl_path: String,
+    /// Directory scanned for WASM plugin manifests (VEYN_PLUGINS_DIR, default "plugins")
+    pub plugins_dir: String,
 }
 
 fn env_bool(key: &str) -> bool {
@@ -40,6 +42,8 @@ impl Default for Config {
             osc_port:        env_u16("VEYN_OSC_PORT", 9000),
             jsonl_path:      std::env::var("VEYN_LOG")
                                  .unwrap_or_else(|_| "veyn-events.jsonl".into()),
+            plugins_dir:     std::env::var("VEYN_PLUGINS_DIR")
+                                 .unwrap_or_else(|_| "plugins".into()),
         }
     }
 }
