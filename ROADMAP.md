@@ -40,13 +40,13 @@
 - [x] Client reconnect + event replay (last N)
 - [x] Simple web dashboard (HTML/JS, served by daemon)
 
-## Phase 4 — Plugin System
+## Phase 4 — Plugin System ✅
 
-- [ ] WASM plugin runtime (wasmtime)
-- [ ] Plugin manifest format (TOML)
-- [ ] Plugin SDK (Rust + WASM target)
-- [ ] Example plugin: Garmin Connect (OAuth pull)
-- [ ] Example plugin: Whoop API
+- [x] WASM plugin runtime (wasmtime)
+- [x] Plugin manifest format (TOML)
+- [x] Plugin SDK (Rust + WASM target)
+- [x] Example plugin: Garmin Connect (OAuth pull)
+- [x] Example plugin: Whoop API
 
 ## Phase 5 — Cross-Device Communication
 

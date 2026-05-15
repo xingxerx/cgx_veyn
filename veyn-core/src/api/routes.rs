@@ -25,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .route("/events/recent",   get(events_recent))
         .route("/metrics/:metric", get(metrics_get))
         .route("/devices",         get(devices_list))
+        .route("/plugins",         get(plugins_list))
         .route("/stream",          get(ws_stream))
         .with_state(state)
 }
@@ -95,6 +96,13 @@ async fn devices_list(State(state): State<AppState>) -> Json<serde_json::Value> 
     let devices: Vec<_> = state.devices.lock().unwrap().values().cloned().collect();
     let count = devices.len();
     Json(json!({ "devices": devices, "count": count }))
+}
+
+// GET /plugins
+async fn plugins_list(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let plugins = state.plugins.lock().unwrap().clone();
+    let count = plugins.len();
+    Json(json!({ "plugins": plugins, "count": count }))
 }
 
 // GET /stream  (WebSocket upgrade)

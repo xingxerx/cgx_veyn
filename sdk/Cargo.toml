@@ -1,0 +1,19 @@
+[package]
+name    = "veyn-plugin-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Guest-side SDK for building VEYN WASM plugins"
+
+# Build with: cargo build --target wasm32-unknown-unknown --release
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid       = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = "s"
+lto       = true

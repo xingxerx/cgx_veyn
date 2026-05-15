@@ -1,0 +1,13 @@
+[plugin]
+name        = "garmin-connect"
+version     = "0.1.0"
+description = "Pulls daily activity metrics from the Garmin Connect API"
+wasm        = "garmin-connect.wasm"
+
+[config]
+# Garmin Connect OAuth2 access token (obtain via the Garmin Health API portal).
+access_token = ""
+# Your Garmin Connect user ID (visible in the Garmin Connect web URL).
+user_id = ""
+# How often to poll the API, in seconds (default: 300 = 5 minutes).
+poll_interval_secs = 300

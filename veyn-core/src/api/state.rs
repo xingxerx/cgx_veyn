@@ -6,8 +6,16 @@ use std::sync::{
 use std::time::Instant;
 
 use chrono::Utc;
+use serde::Serialize;
 use tokio::sync::broadcast;
 use veyn_schemas::{DeviceState, VeynDevice, VeynEvent};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+}
 
 const RECENT_CAP: usize = 1_000;
 const BROADCAST_CAP: usize = 256;
@@ -20,6 +28,7 @@ pub struct AppState {
     pub broadcast_tx:   broadcast::Sender<VeynEvent>,
     pub start_time:     Arc<Instant>,
     pub event_count:    Arc<AtomicU64>,
+    pub plugins:        Arc<Mutex<Vec<PluginInfo>>>,
 }
 
 impl AppState {
@@ -32,7 +41,12 @@ impl AppState {
             broadcast_tx,
             start_time:     Arc::new(Instant::now()),
             event_count:    Arc::new(AtomicU64::new(0)),
+            plugins:        Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub fn register_plugin(&self, info: PluginInfo) {
+        self.plugins.lock().unwrap().push(info);
     }
 
     /// Ingest an event into all state stores and broadcast to WebSocket subscribers.

@@ -1,0 +1,11 @@
+[plugin]
+name        = "whoop"
+version     = "0.1.0"
+description = "Pulls recovery, sleep, and strain metrics from the WHOOP API"
+wasm        = "whoop.wasm"
+
+[config]
+# WHOOP API access token (obtain via https://developer.whoop.com).
+access_token = ""
+# How often to poll the API, in seconds (default: 300 = 5 minutes).
+poll_interval_secs = 300

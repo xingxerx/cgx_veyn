@@ -10,7 +10,7 @@ use veyn_adapters::{
 };
 use veyn_schemas::VeynEvent;
 
-use api::state::AppState;
+use api::state::{AppState, PluginInfo};
 use config::Config;
 
 #[tokio::main]
@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
         mock_mode       = cfg.mock_mode,
         ble_enabled     = cfg.ble_enabled,
         eeg_enabled     = cfg.eeg_enabled,
+        plugins_dir     = %cfg.plugins_dir,
         "VEYN daemon starting"
     );
 
@@ -61,6 +62,20 @@ async fn main() -> Result<()> {
     // EEG/OSC adapter (VEYN_EEG=true)
     if cfg.eeg_enabled {
         spawn_adapter(EegAdapter::new(cfg.osc_port), event_tx.clone());
+    }
+
+    // WASM plugin adapters (VEYN_PLUGINS_DIR)
+    let plugin_adapters = veyn_plugins::discover_adapters(&cfg.plugins_dir);
+    if plugin_adapters.is_empty() {
+        info!(plugins_dir = %cfg.plugins_dir, "no WASM plugins found");
+    }
+    for plugin in plugin_adapters {
+        state.register_plugin(PluginInfo {
+            name:        plugin.manifest.plugin.name.clone(),
+            version:     plugin.manifest.plugin.version.clone(),
+            description: plugin.manifest.plugin.description.clone(),
+        });
+        spawn_adapter(plugin, event_tx.clone());
     }
 
     // REST + WebSocket API — blocks until the server exits
