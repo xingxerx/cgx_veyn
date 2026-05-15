@@ -33,12 +33,12 @@
 - [x] BLE adapter: device persistence (known devices list)
 - [x] Schema: `VeynDevice` LMDB registry
 
-## Phase 3 — Live Streaming
+## Phase 3 — Live Streaming ✅
 
-- [ ] WebSocket endpoint `GET /stream`
-- [ ] Broadcast channel (tokio broadcast) wired to dispatcher
-- [ ] Client reconnect + event replay (last N)
-- [ ] Simple web dashboard (HTML/JS, served by daemon)
+- [x] WebSocket endpoint `GET /stream`
+- [x] Broadcast channel (tokio broadcast) wired to dispatcher
+- [x] Client reconnect + event replay (last N)
+- [x] Simple web dashboard (HTML/JS, served by daemon)
 
 ## Phase 4 — Plugin System
 
