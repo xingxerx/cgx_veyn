@@ -1,7 +1,10 @@
 # VEYN — Master TODO
 
 > Roadmap to a perfect, runnable-out-of-the-box build.
-> Priority: 🔴 Critical (blocks launch) → 🟡 High (needed for safety/correctness) → 🟢 Nice-to-have
+> Priority: 
+🔴 Critical (blocks launch) → 
+🟡 High (needed for safety/correctness) → 
+🟢 Nice-to-have
 
 -----
 
