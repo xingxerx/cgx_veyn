@@ -1,0 +1,20 @@
+[package]
+name    = "garmin-connect"
+version = "0.1.0"
+edition = "2021"
+
+# Compile with: cargo build --target wasm32-unknown-unknown --release
+# Then copy target/wasm32-unknown-unknown/release/garmin_connect.wasm
+# next to plugin.toml and rename to garmin-connect.wasm.
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+veyn-plugin-sdk = { path = "../../sdk" }
+serde            = { version = "1", features = ["derive"] }
+serde_json       = "1"
+
+[profile.release]
+opt-level = "s"
+lto       = true
