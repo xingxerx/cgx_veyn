@@ -27,7 +27,7 @@ VEYN is the lever. It uses every legitimate, documented access point those ecosy
 - **Mobile Health SDK Bridge** — reads biometric data (heart rate, HRV, SpO₂, steps, sleep stages, respiratory rate, skin temperature, active energy, VO₂ max) from a paired companion app running on a mobile device, streamed live over a local TCP connection
 - **BLE Universal Adapter** — connects to any Bluetooth Low Energy wearable broadcasting standard GATT profiles; no proprietary driver required
 - **EEG / OSC Adapter** — ingests real-time neural band data (Delta, Theta, Alpha, Beta) from EEG headsets via OSC (Open Sound Control) over UDP
-- **Plugin Adapters** — extend ingestion to any source via the WASM plugin system (Phase 4)
+- **Plugin Adapters** — extend ingestion to any source via the WASM plugin system
 
 ### Data Normalization
 
@@ -47,7 +47,7 @@ VEYN is the lever. It uses every legitimate, documented access point those ecosy
 - **WebSocket** — live event stream at `/stream`; any subscriber receives every event in real time
 - **Local only** — bound to `127.0.0.1` by default; never touches an external server
 
-### Cross-Device Communication (Phase 5)
+### Cross-Device Communication
 
 - Route notifications and haptic triggers from any software on your machine back to paired wearable devices
 - Use wearable gestures and inputs as desktop events
@@ -103,8 +103,7 @@ Dispatcher
     └── API (REST + WebSocket — Axum :7700)
 ```
 
-Full diagram: [`docs/architecture.mermaid`](docs/architecture.mermaid)
-Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
+Full roadmap: [`ROADMAP.md`](ROADMAP.md)
 
 -----
 
@@ -120,20 +119,20 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 |Structured history  |SQLite                         |
 |Audit log           |Append-only JSONL              |
 |Mobile companion    |Swift (health SDK + TCP stream)|
-|Plugin runtime      |WASM — wasmtime (Phase 4)      |
+|Plugin runtime      |WASM — wasmtime                |
 
 -----
 
 ## Roadmap
 
-|Phase|Focus                                                        |
-|-----|-------------------------------------------------------------|
-|0    |Foundation — scaffold, schemas, adapters, mock ✅            |
-|1    |Mobile health bridge MVP — live biometric stream to daemon   |
-|2    |BLE universal wearable — GATT scan, connect, decode          |
-|3    |Live streaming — WebSocket broadcast, web dashboard          |
-|4    |Plugin system — WASM adapters, community extensions          |
-|5    |Cross-device communication — notifications, haptics, gestures|
+|Phase|Focus                                                          |
+|-----|---------------------------------------------------------------|
+|0    |Foundation — scaffold, schemas, adapters, mock ✅              |
+|1    |Mobile health bridge MVP — live biometric stream to daemon ✅  |
+|2    |BLE universal wearable — GATT scan, connect, decode ✅         |
+|3    |Live streaming — WebSocket broadcast, web dashboard ✅         |
+|4    |Plugin system — WASM adapters, community extensions ✅         |
+|5    |Cross-device communication — notifications, haptics, gestures ✅|
 
 -----
 
