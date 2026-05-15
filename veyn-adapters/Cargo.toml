@@ -1,0 +1,15 @@
+[package]
+name    = "veyn-adapters"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+veyn-schemas = { path = "../veyn-schemas" }
+tokio        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+async-trait  = { workspace = true }
+tracing      = { workspace = true }
+uuid         = { workspace = true }
+rand         = "0.8"
