@@ -56,7 +56,6 @@ VEYN is the lever. It uses every legitimate, documented access point those ecosy
 ### AI & AGI Integration
 
 - Event bus designed as a first-class live signal source for AI pipelines
-- Native adapter planned for Qallow AGI chaos modeling framework (Phase 5)
 - Any LLM, agent, or inference system with HTTP access can consume the full biometric stream
 
 -----
