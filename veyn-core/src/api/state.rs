@@ -8,7 +8,7 @@ use std::time::Instant;
 use chrono::Utc;
 use serde::Serialize;
 use tokio::sync::broadcast;
-use veyn_schemas::{DeviceState, VeynDevice, VeynEvent};
+use veyn_schemas::{DeviceState, PresenceInfo, VeynDevice, VeynEvent, VeynNotification};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginInfo {
@@ -19,29 +19,35 @@ pub struct PluginInfo {
 
 const RECENT_CAP: usize = 1_000;
 const BROADCAST_CAP: usize = 256;
+const NOTIF_CAP: usize = 64;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub recent_events:  Arc<Mutex<VecDeque<VeynEvent>>>,
-    pub latest_metrics: Arc<Mutex<HashMap<String, VeynEvent>>>,
-    pub devices:        Arc<Mutex<HashMap<String, VeynDevice>>>,
-    pub broadcast_tx:   broadcast::Sender<VeynEvent>,
-    pub start_time:     Arc<Instant>,
-    pub event_count:    Arc<AtomicU64>,
-    pub plugins:        Arc<Mutex<Vec<PluginInfo>>>,
+    pub recent_events:    Arc<Mutex<VecDeque<VeynEvent>>>,
+    pub latest_metrics:   Arc<Mutex<HashMap<String, VeynEvent>>>,
+    pub devices:          Arc<Mutex<HashMap<String, VeynDevice>>>,
+    pub broadcast_tx:     broadcast::Sender<VeynEvent>,
+    pub notification_tx:  broadcast::Sender<VeynNotification>,
+    pub presence:         Arc<Mutex<HashMap<String, PresenceInfo>>>,
+    pub start_time:       Arc<Instant>,
+    pub event_count:      Arc<AtomicU64>,
+    pub plugins:          Arc<Mutex<Vec<PluginInfo>>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
+        let (notification_tx, _) = broadcast::channel(NOTIF_CAP);
         Self {
-            recent_events:  Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_CAP))),
-            latest_metrics: Arc::new(Mutex::new(HashMap::new())),
-            devices:        Arc::new(Mutex::new(HashMap::new())),
+            recent_events:   Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_CAP))),
+            latest_metrics:  Arc::new(Mutex::new(HashMap::new())),
+            devices:         Arc::new(Mutex::new(HashMap::new())),
             broadcast_tx,
-            start_time:     Arc::new(Instant::now()),
-            event_count:    Arc::new(AtomicU64::new(0)),
-            plugins:        Arc::new(Mutex::new(Vec::new())),
+            notification_tx,
+            presence:        Arc::new(Mutex::new(HashMap::new())),
+            start_time:      Arc::new(Instant::now()),
+            event_count:     Arc::new(AtomicU64::new(0)),
+            plugins:         Arc::new(Mutex::new(Vec::new())),
         }
     }
 

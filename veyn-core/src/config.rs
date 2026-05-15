@@ -16,6 +16,12 @@ pub struct Config {
     pub jsonl_path: String,
     /// Directory scanned for WASM plugin manifests (VEYN_PLUGINS_DIR, default "plugins")
     pub plugins_dir: String,
+    /// MQTT broker URL for the smart-home bridge, e.g. `mqtt://localhost:1883`
+    /// (VEYN_MQTT_URL — unset disables the bridge)
+    pub mqtt_url: Option<String>,
+    /// Seconds of silence from a device before it is marked absent (VEYN_PRESENCE_TIMEOUT,
+    /// default 30)
+    pub presence_timeout_secs: u64,
 }
 
 fn env_bool(key: &str) -> bool {
@@ -31,19 +37,28 @@ fn env_u16(key: &str, default: u16) -> u16 {
         .unwrap_or(default)
 }
 
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
-            api_port:        env_u16("VEYN_PORT", 7700),
-            healthkit_port:  env_u16("VEYN_HK_PORT", 7701),
-            mock_mode:       env_bool("VEYN_MOCK"),
-            ble_enabled:     env_bool("VEYN_BLE"),
-            eeg_enabled:     env_bool("VEYN_EEG"),
-            osc_port:        env_u16("VEYN_OSC_PORT", 9000),
-            jsonl_path:      std::env::var("VEYN_LOG")
-                                 .unwrap_or_else(|_| "veyn-events.jsonl".into()),
-            plugins_dir:     std::env::var("VEYN_PLUGINS_DIR")
-                                 .unwrap_or_else(|_| "plugins".into()),
+            api_port:               env_u16("VEYN_PORT", 7700),
+            healthkit_port:         env_u16("VEYN_HK_PORT", 7701),
+            mock_mode:              env_bool("VEYN_MOCK"),
+            ble_enabled:            env_bool("VEYN_BLE"),
+            eeg_enabled:            env_bool("VEYN_EEG"),
+            osc_port:               env_u16("VEYN_OSC_PORT", 9000),
+            jsonl_path:             std::env::var("VEYN_LOG")
+                                        .unwrap_or_else(|_| "veyn-events.jsonl".into()),
+            plugins_dir:            std::env::var("VEYN_PLUGINS_DIR")
+                                        .unwrap_or_else(|_| "plugins".into()),
+            mqtt_url:               std::env::var("VEYN_MQTT_URL").ok(),
+            presence_timeout_secs:  env_u64("VEYN_PRESENCE_TIMEOUT", 30),
         }
     }
 }
