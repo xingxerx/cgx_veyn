@@ -1,5 +1,5 @@
 # ⚖️ THE CGX SOVEREIGN CANON
-**Version:** 1.0.0  VEYN
+**Version:** 1.0.0  
 **Authority:** XINGXERX (Sovereign Architect)  
 **Enforcement:** DGK-IES / VEYN-COHERENCE KERNEL  
 
