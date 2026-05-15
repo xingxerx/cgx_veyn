@@ -13,3 +13,5 @@ async-trait  = { workspace = true }
 tracing      = { workspace = true }
 uuid         = { workspace = true }
 rand         = "0.8"
+btleplug     = "0.11"
+futures      = "0.3"

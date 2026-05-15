@@ -14,24 +14,24 @@
 - [x] iOS Companion App skeleton (Swift / HealthKit)
 - [x] Architecture diagram + docs
 
-## Phase 1 — HealthKit Bridge (MVP)
+## Phase 1 — HealthKit Bridge (MVP) ✅
 
-- [ ] iOS companion app: full HealthKit query + background delivery
-- [ ] iOS companion app: auto-discover daemon on LAN (mDNS/Bonjour)
-- [ ] iOS companion app: SwiftUI status screen
-- [ ] Daemon: LMDB state layer (latest value per metric)
-- [ ] Daemon: SQLite migration runner + history queries
-- [ ] REST: `GET /metrics/:metric` returns real LMDB value
-- [ ] REST: `GET /devices` tracks active companion sessions
-- [ ] README: Getting Started guide
+- [x] iOS companion app: full HealthKit query + background delivery
+- [x] iOS companion app: auto-discover daemon on LAN (mDNS/Bonjour)
+- [x] iOS companion app: SwiftUI status screen
+- [x] Daemon: LMDB state layer (latest value per metric)
+- [x] Daemon: SQLite migration runner + history queries
+- [x] REST: `GET /metrics/:metric` returns real LMDB value
+- [x] REST: `GET /devices` tracks active companion sessions
+- [x] README: Getting Started guide
 
-## Phase 2 — BLE Universal Wearable
+## Phase 2 — BLE Universal Wearable ✅
 
-- [ ] BLE adapter: scan + connect to GATT Heart Rate profile
-- [ ] BLE adapter: decode HR measurement characteristic
-- [ ] BLE adapter: Battery level monitoring
-- [ ] BLE adapter: device persistence (known devices list)
-- [ ] Schema: `VeynDevice` LMDB registry
+- [x] BLE adapter: scan + connect to GATT Heart Rate profile
+- [x] BLE adapter: decode HR measurement characteristic
+- [x] BLE adapter: Battery level monitoring
+- [x] BLE adapter: device persistence (known devices list)
+- [x] Schema: `VeynDevice` LMDB registry
 
 ## Phase 3 — Live Streaming
 
