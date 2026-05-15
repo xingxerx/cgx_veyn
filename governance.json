@@ -1,0 +1,19 @@
+{
+  "kernel": "DGK-IES",
+  "version": "1.0.0",
+  "sovereign_architect": "XINGXERX",
+  "invariants": {
+    "inv_01_sovereignty": { "enforce": "strict", "priority": 1.0, "hash_audit": true },
+    "inv_02_symbiosis": { "enforce": "strict", "priority": 1.0, "check_vector": "ecological_impact" },
+    "inv_03_coherence": { "min_kappa": 0.92, "entropy_threshold": 0.08, "auto_reset": true },
+    "inv_04_temporal": { "foresight_depth": 5, "symmetry_check": "bilateral" },
+    "inv_05_integrity": { "smuggler_audit": "active", "key_required": true },
+    "inv_06_non_subversion": { "agentic_bias_filter": "high", "social_eng_block": true },
+    "inv_07_recursive": { "inheritance": "mandatory", "re_hash_on_optimization": true }
+  },
+  "lumeren_protocol": {
+    "glyph_set": "22-standard",
+    "encoding": "tensor-logic"
+  },
+  "emergency_interrupt": "MLR_SYSTEM_PURGE"
+}
