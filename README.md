@@ -47,7 +47,7 @@ VEYN is the lever. It uses every legitimate, documented access point those ecosy
 - **WebSocket** — live event stream at `/stream`; any subscriber receives every event in real time
 - **Local only** — bound to `127.0.0.1` by default; never touches an external server
 
-### Cross-Device Communication (Phase 6)
+### Cross-Device Communication (Phase 5)
 
 - Route notifications and haptic triggers from any software on your machine back to paired wearable devices
 - Use wearable gestures and inputs as desktop events
