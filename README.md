@@ -1,6 +1,6 @@
 # CGX VEYN
 
-**The Sensory Nervous System for Local AI**
+**A Sensory Nervous System for Software **
 
 VEYN is a local-first daemon that normalizes signals from any connected device into a single open event stream — exposed as a standard local API any application, script, or AI agent can consume.
 
