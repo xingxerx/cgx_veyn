@@ -48,9 +48,9 @@
 - [x] Example plugin: Garmin Connect (OAuth pull)
 - [x] Example plugin: Whoop API
 
-## Phase 5 — Cross-Device Communication
+## Phase 5 — Cross-Device Communication ✅
 
-- [ ] Notification routing: PC → Apple Watch (via companion)
-- [ ] Gesture/input forwarding: Watch crown/tap → desktop events
-- [ ] Presence detection: watch heartbeat → PC automation trigger
-- [ ] Smart home bridge: MQTT output adapter
+- [x] Notification routing: PC → Apple Watch (via companion)
+- [x] Gesture/input forwarding: Watch crown/tap → desktop events
+- [x] Presence detection: watch heartbeat → PC automation trigger
+- [x] Smart home bridge: MQTT output adapter

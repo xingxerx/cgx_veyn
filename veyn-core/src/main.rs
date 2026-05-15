@@ -1,6 +1,7 @@
 mod api;
 mod config;
 mod dispatcher;
+mod presence;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -31,6 +32,8 @@ async fn main() -> Result<()> {
         ble_enabled     = cfg.ble_enabled,
         eeg_enabled     = cfg.eeg_enabled,
         plugins_dir     = %cfg.plugins_dir,
+        mqtt_enabled    = cfg.mqtt_url.is_some(),
+        presence_timeout_secs = cfg.presence_timeout_secs,
         "VEYN daemon starting"
     );
 
@@ -46,13 +49,27 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Presence detection task
+    {
+        let state = state.clone();
+        let tx = event_tx.clone();
+        let timeout_ms = (cfg.presence_timeout_secs * 1_000) as i64;
+        tokio::spawn(async move {
+            presence::run(state, tx, timeout_ms).await;
+        });
+    }
+
     // Mock adapter (VEYN_MOCK=true)
     if cfg.mock_mode {
         spawn_adapter(MockAdapter, event_tx.clone());
     }
 
-    // HealthKit TCP relay (always running; harmless when companion is absent)
-    spawn_adapter(HealthKitAdapter::new(cfg.healthkit_port), event_tx.clone());
+    // HealthKit TCP relay — bidirectional: receives health+gesture events from
+    // the companion and routes notification frames back to it.
+    spawn_adapter(
+        HealthKitAdapter::new(cfg.healthkit_port, state.notification_tx.clone()),
+        event_tx.clone(),
+    );
 
     // BLE adapter (VEYN_BLE=true)
     if cfg.ble_enabled {
@@ -76,6 +93,16 @@ async fn main() -> Result<()> {
             description: plugin.manifest.plugin.description.clone(),
         });
         spawn_adapter(plugin, event_tx.clone());
+    }
+
+    // Smart home MQTT bridge (VEYN_MQTT_URL)
+    if let Some(mqtt_url) = cfg.mqtt_url {
+        let rx = state.broadcast_tx.subscribe();
+        tokio::spawn(async move {
+            if let Err(e) = veyn_adapters::mqtt::run(rx, mqtt_url).await {
+                error!("MQTT bridge error: {}", e);
+            }
+        });
     }
 
     // REST + WebSocket API — blocks until the server exits

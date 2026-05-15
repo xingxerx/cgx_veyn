@@ -7,6 +7,7 @@ pub mod ble;
 pub mod eeg;
 pub mod healthkit;
 pub mod mock;
+pub mod mqtt;
 
 /// Every data source implements this trait.
 #[async_trait]

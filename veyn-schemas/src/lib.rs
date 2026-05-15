@@ -4,6 +4,52 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Notification sent from the daemon to a companion device (e.g. Apple Watch).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VeynNotification {
+    pub id: String,
+    pub ts: i64,
+    pub title: String,
+    pub body: String,
+    /// If set, only route to the companion that owns this device ID.
+    pub target_device: Option<String>,
+}
+
+impl VeynNotification {
+    pub fn new(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            ts: Utc::now().timestamp_millis(),
+            title: title.into(),
+            body: body.into(),
+            target_device: None,
+        }
+    }
+
+    pub fn for_device(mut self, device_id: impl Into<String>) -> Self {
+        self.target_device = Some(device_id.into());
+        self
+    }
+}
+
+/// Per-device presence record tracked by the presence detection task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PresenceState {
+    Present,
+    Absent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresenceInfo {
+    pub device_id: String,
+    pub state: PresenceState,
+    /// Unix ms timestamp of the last observed event from this device.
+    pub last_seen: i64,
+    /// Unix ms timestamp when the current state was entered.
+    pub since_ts: i64,
+}
+
 /// Unified event emitted by every adapter, regardless of source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VeynEvent {

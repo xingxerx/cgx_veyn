@@ -5,14 +5,15 @@ use axum::{
     },
     http::StatusCode,
     response::{Html, IntoResponse, Json},
-    routing::get,
+    routing::{get, post},
     Router,
 };
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::atomic::Ordering;
 use tokio::sync::broadcast::error::RecvError;
 use tracing::warn;
-use veyn_schemas::VeynEvent;
+use veyn_schemas::{VeynEvent, VeynNotification};
 
 use super::state::AppState;
 
@@ -20,13 +21,17 @@ const DASHBOARD: &str = include_str!("dashboard.html");
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/",                get(dashboard))
-        .route("/health",          get(health))
-        .route("/events/recent",   get(events_recent))
-        .route("/metrics/:metric", get(metrics_get))
-        .route("/devices",         get(devices_list))
-        .route("/plugins",         get(plugins_list))
-        .route("/stream",          get(ws_stream))
+        .route("/",                  get(dashboard))
+        .route("/health",            get(health))
+        .route("/events/recent",     get(events_recent))
+        .route("/metrics/:metric",   get(metrics_get))
+        .route("/devices",           get(devices_list))
+        .route("/plugins",           get(plugins_list))
+        .route("/stream",            get(ws_stream))
+        // Phase 5
+        .route("/notify",            post(notify_post))
+        .route("/presence",          get(presence_get))
+        .route("/gestures/recent",   get(gestures_recent))
         .with_state(state)
 }
 
@@ -157,7 +162,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 }
             }
             msg = socket.recv() => {
-                // Accept ping/pong silently; any error or close terminates the loop.
                 match msg {
                     Some(Ok(_)) => {}
                     _ => break,
@@ -165,4 +169,52 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
         }
     }
+}
+
+// ── Phase 5 routes ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct NotifyRequest {
+    title: String,
+    body: String,
+    target_device: Option<String>,
+}
+
+// POST /notify
+async fn notify_post(
+    State(state): State<AppState>,
+    Json(req): Json<NotifyRequest>,
+) -> impl IntoResponse {
+    let mut notif = VeynNotification::new(req.title, req.body);
+    if let Some(dev) = req.target_device {
+        notif = notif.for_device(dev);
+    }
+    let id = notif.id.clone();
+
+    // send() errors only when there are zero subscribers — that's fine.
+    let _ = state.notification_tx.send(notif);
+
+    (StatusCode::ACCEPTED, Json(json!({ "id": id, "status": "queued" })))
+}
+
+// GET /presence
+async fn presence_get(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let presence: Vec<_> = state.presence.lock().unwrap().values().cloned().collect();
+    let count = presence.len();
+    Json(json!({ "presence": presence, "count": count }))
+}
+
+// GET /gestures/recent  — returns recent VeynEvents with source == "companion"
+// and a metric that starts with "gesture_".
+async fn gestures_recent(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let gestures: Vec<VeynEvent> = state
+        .recent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| e.source == "companion" && e.metric.starts_with("gesture_"))
+        .cloned()
+        .collect();
+    let count = gestures.len();
+    Json(json!({ "gestures": gestures, "count": count }))
 }
