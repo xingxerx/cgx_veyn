@@ -65,7 +65,7 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let filtered = state.event_count.load(Ordering::Relaxed);
     let ratio = *state.compression_ratio.lock().unwrap();
     let connected_devices = state.devices.lock().unwrap().len();
-    let event_rate_hz = if uptime > 0 { filtered / uptime } else { 0 };
+    let event_rate_hz = filtered.checked_div(uptime).unwrap_or(0);
 
     Json(json!({
         "status":            "ok",
