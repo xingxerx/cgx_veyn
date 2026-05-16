@@ -25,8 +25,8 @@ pub use serde_json;
 
 // ── Re-exported event schema ──────────────────────────────────────────────────
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Mirrors `veyn_schemas::VeynEvent` for use inside the WASM guest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,9 +145,12 @@ extern "C" {
 
     #[link_name = "http_get"]
     fn __veyn_http_get(
-        url_ptr: u32, url_len: u32,
-        tok_ptr: u32, tok_len: u32,
-        out_ptr: u32, out_cap: u32,
+        url_ptr: u32,
+        url_len: u32,
+        tok_ptr: u32,
+        tok_len: u32,
+        out_ptr: u32,
+        out_cap: u32,
     ) -> i32;
 }
 
@@ -177,7 +180,9 @@ fn new_uuid() -> String {
         (t >> 8) & 0xffff,
         t & 0x0fff,
         0x8000 | (t & 0x3fff),
-        t.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) & 0xffff_ffff_ffff,
+        t.wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407)
+            & 0xffff_ffff_ffff,
     )
 }
 
@@ -228,7 +233,8 @@ macro_rules! veyn_register_plugin {
 
             #[no_mangle]
             pub unsafe extern "C" fn veyn_init(config_ptr: u32, config_len: u32) -> i32 {
-                let bytes = std::slice::from_raw_parts(config_ptr as *const u8, config_len as usize);
+                let bytes =
+                    std::slice::from_raw_parts(config_ptr as *const u8, config_len as usize);
                 let config = $crate::serde_json::from_slice(bytes)
                     .unwrap_or($crate::serde_json::Value::Object(Default::default()));
                 match <$ty as $crate::VeynPlugin>::init(config) {
@@ -250,8 +256,7 @@ macro_rules! veyn_register_plugin {
                     None => return 0,
                 };
                 let events = <$ty as $crate::VeynPlugin>::poll(plugin);
-                let buf =
-                    std::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_cap as usize);
+                let buf = std::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_cap as usize);
                 let mut written = 0usize;
                 for ev in &events {
                     if let Ok(json) = $crate::serde_json::to_string(ev) {

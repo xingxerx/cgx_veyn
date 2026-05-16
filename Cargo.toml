@@ -1,5 +1,5 @@
 [workspace]
-members = ["veyn-schemas", "veyn-adapters", "veyn-core", "veyn-plugins"]
+members = ["veyn-schemas", "veyn-adapters", "veyn-core", "veyn-plugins", "veyn-mcp", "sdk"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -12,6 +12,7 @@ tracing    = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid       = { version = "1",    features = ["v4"] }
 chrono     = { version = "0.4",  features = ["serde"] }
-clap       = { version = "4",    features = ["derive"] }
+clap       = { version = "4",    features = ["derive", "env"] }
 rand       = "0.8"
 toml       = "0.8"
+reqwest    = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
