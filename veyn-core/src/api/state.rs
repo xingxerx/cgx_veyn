@@ -5,6 +5,7 @@ use std::sync::{
 };
 use std::time::Instant;
 
+
 use chrono::Utc;
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -23,6 +24,7 @@ const NOTIF_CAP: usize = 64;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub token:            Arc<str>,
     pub recent_events:    Arc<Mutex<VecDeque<VeynEvent>>>,
     pub latest_metrics:   Arc<Mutex<HashMap<String, VeynEvent>>>,
     pub devices:          Arc<Mutex<HashMap<String, VeynDevice>>>,
@@ -35,10 +37,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(token: String) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
         let (notification_tx, _) = broadcast::channel(NOTIF_CAP);
         Self {
+            token:           Arc::from(token.as_str()),
             recent_events:   Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_CAP))),
             latest_metrics:  Arc::new(Mutex::new(HashMap::new())),
             devices:         Arc::new(Mutex::new(HashMap::new())),
