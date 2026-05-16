@@ -1,0 +1,5 @@
+[build]
+target = "x86_64-unknown-linux-gnu"
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=--export=veyn_alloc", "-C", "link-arg=--export=veyn_free", "-C", "link-arg=--export=veyn_init", "-C", "link-arg=--export=veyn_poll"]

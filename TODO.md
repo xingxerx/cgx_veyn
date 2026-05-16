@@ -11,14 +11,14 @@
 
 ## 0. Repo Hygiene (Do First)
 
-- [ ] 🔴 Add root `Cargo.toml` workspace manifest listing all crates (`veyn-core`, `veyn-adapters`, `veyn-plugins`, `sdk`)
-- [ ] 🔴 Add `.cargo/config.toml` with target defaults so `cargo build` just works cross-platform
-- [ ] 🔴 Add `README.md` — what VEYN is, how to install, how to run, supported platforms
-- [ ] 🔴 Add `INSTALL.md` — prerequisites (Rust toolchain version, OS libs like `libudev`, `libdbus`, etc.)
-- [ ] 🟡 Add `.env.example` with all required environment variables documented
-- [ ] 🟡 Add `CHANGELOG.md`
-- [ ] 🟡 Add `CONTRIBUTING.md`
-- [ ] 🟢 Add `LICENSE` file (missing from repo)
+- [x] 🔴 Add root `Cargo.toml` workspace manifest listing all crates (`veyn-core`, `veyn-adapters`, `veyn-plugins`, `sdk`)
+- [x] 🔴 Add `.cargo/config.toml` with target defaults so `cargo build` just works cross-platform
+- [x] 🔴 Add `README.md` — what VEYN is, how to install, how to run, supported platforms
+- [x] 🔴 Add `INSTALL.md` — prerequisites (Rust toolchain version, OS libs like `libudev`, `libdbus`, etc.)
+- [x] 🟡 Add `.env.example` with all required environment variables documented
+- [x] 🟡 Add `CHANGELOG.md`
+- [x] 🟡 Add `CONTRIBUTING.md`
+- [x] 🟢 Add `LICENSE` file (missing from repo)
 
 -----
 
