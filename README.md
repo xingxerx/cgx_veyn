@@ -64,9 +64,9 @@ curl http://localhost:7700/context/current
 |3    |Live streaming — WebSocket broadcast, web dashboard                |✅     |
 |4    |Plugin system — WASM adapters, community extensions                |✅     |
 |5    |Cross-device communication — notifications, haptics, gestures      |✅     |
-|6    |Universal device expansion — HID, MIDI, Serial, Filesystem, Network|🔜     |
-|7    |AI context layer — `/context/current`, agent SDK                   |🔜     |
-|8    |Plugin registry — community adapters, discovery, versioning        |🔜     |
+|6    |Universal device expansion — HID, MIDI, Serial, Filesystem, Network|✅     |
+|7    |AI context layer — `/context/current`, agent SDK                   |✅     |
+|8    |Plugin registry — community adapters, discovery, versioning        |✅     |     |
 
 -----
 
