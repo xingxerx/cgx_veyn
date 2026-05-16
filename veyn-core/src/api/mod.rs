@@ -21,15 +21,14 @@ pub async fn serve(
 ) -> Result<()> {
     let cors = build_cors(&state.config.cors_origins, port);
 
+    // Layer order: last added is outermost (first to process requests).
+    // Request flow: cors → host_guard → require_bearer → router
     let app = routes::router(state.clone())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,
         ))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            host_validation,
-        ))
+        .layer(middleware::from_fn_with_state(state.clone(), host_guard))
         .layer(cors);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -44,8 +43,9 @@ pub async fn serve(
     Ok(())
 }
 
-/// Validate the Host header to block DNS-rebinding attacks.
-async fn host_validation(
+/// Reject requests whose `Host` header is not localhost or 127.0.0.1,
+/// blocking DNS-rebinding attacks. Configured CORS origins are also allowed.
+async fn host_guard(
     State(state): State<AppState>,
     req: Request,
     next: Next,
@@ -54,8 +54,8 @@ async fn host_validation(
         if let Ok(host) = host_hdr.to_str() {
             let port = state.config.api_port;
             let local = [
-                format!("localhost:{}", port),
-                format!("127.0.0.1:{}", port),
+                format!("localhost:{port}"),
+                format!("127.0.0.1:{port}"),
                 "localhost".to_string(),
                 "127.0.0.1".to_string(),
             ];
@@ -77,7 +77,7 @@ fn build_cors(origins: &[String], port: u16) -> CorsLayer {
     let allow_methods = AllowMethods::list([Method::GET, Method::POST, Method::OPTIONS]);
 
     if origins.is_empty() {
-        let localhost: HeaderValue = format!("http://localhost:{}", port)
+        let localhost: HeaderValue = format!("http://localhost:{port}")
             .parse()
             .expect("valid header value");
         CorsLayer::new()

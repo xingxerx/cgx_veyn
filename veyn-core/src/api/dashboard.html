@@ -183,6 +183,7 @@
   const bodyEl    = document.getElementById('feed-body');
   const countEl   = document.getElementById('event-count');
 
+  const token      = new URLSearchParams(location.search).get('token') || '';
   let metrics      = {};
   let totalEvents  = 0;
   let retryDelay   = 2000;
@@ -251,7 +252,8 @@
   function connect() {
     setStatus('connecting…', '');
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws    = new WebSocket(`${proto}//${location.host}/stream`);
+    const query = token ? `?token=${encodeURIComponent(token)}` : '';
+    const ws    = new WebSocket(`${proto}//${location.host}/stream${query}`);
 
     ws.onopen = () => {
       setStatus('connected', 'connected');
@@ -271,7 +273,18 @@
     ws.onerror = () => setStatus('error', 'error');
   }
 
-  connect();
+  if (token) {
+    connect();
+  } else {
+    setStatus('no token', 'error');
+    document.querySelector('header').insertAdjacentHTML(
+      'afterend',
+      `<p style="color:var(--red);margin-bottom:1.5rem">` +
+      `No token supplied. Access the dashboard at ` +
+      `<code>http://localhost:${location.port || 80}/?token=YOUR_TOKEN</code>. ` +
+      `Token is stored at <code>~/.local/share/veyn/token</code>.</p>`
+    );
+  }
 </script>
 </body>
 </html>
