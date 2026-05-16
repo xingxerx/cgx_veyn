@@ -7,7 +7,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, info, warn};
 
 #[derive(Parser, Debug)]
-#[command(name = "veyn-mcp", version, about = "MCP stdio server for the VEYN daemon")]
+#[command(
+    name = "veyn-mcp",
+    version,
+    about = "MCP stdio server for the VEYN daemon"
+)]
 struct Cli {
     #[arg(long, env = "VEYN_URL", default_value = "http://127.0.0.1:7700")]
     url: String,
@@ -50,7 +54,12 @@ struct RpcError {
 
 impl RpcResponse {
     fn ok(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0", id, result: Some(result), error: None }
+        Self {
+            jsonrpc: "2.0",
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
 
     fn err(id: Value, code: i32, msg: impl Into<String>) -> Self {
@@ -58,12 +67,20 @@ impl RpcResponse {
             jsonrpc: "2.0",
             id,
             result: None,
-            error: Some(RpcError { code, message: msg.into() }),
+            error: Some(RpcError {
+                code,
+                message: msg.into(),
+            }),
         }
     }
 
     fn notification() -> Self {
-        Self { jsonrpc: "2.0", id: Value::Null, result: None, error: None }
+        Self {
+            jsonrpc: "2.0",
+            id: Value::Null,
+            result: None,
+            error: None,
+        }
     }
 
     fn is_notification(&self) -> bool {
@@ -161,7 +178,11 @@ impl VeynClient {
             .timeout(Duration::from_secs(timeout_secs))
             .build()
             .context("build HTTP client")?;
-        Ok(Self { base_url, token, http })
+        Ok(Self {
+            base_url,
+            token,
+            http,
+        })
     }
 
     async fn get(&self, path: &str) -> Result<Value> {
@@ -172,7 +193,10 @@ impl VeynClient {
         }
         let resp = req.send().await.with_context(|| format!("GET {url}"))?;
         let status = resp.status();
-        let body: Value = resp.json().await.with_context(|| format!("parse GET {url}"))?;
+        let body: Value = resp
+            .json()
+            .await
+            .with_context(|| format!("parse GET {url}"))?;
         if !status.is_success() {
             anyhow::bail!("HTTP {status} on GET {path}: {body}");
         }
@@ -187,7 +211,10 @@ impl VeynClient {
         }
         let resp = req.send().await.with_context(|| format!("POST {url}"))?;
         let status = resp.status();
-        let body: Value = resp.json().await.with_context(|| format!("parse POST {url}"))?;
+        let body: Value = resp
+            .json()
+            .await
+            .with_context(|| format!("parse POST {url}"))?;
         if !status.is_success() {
             anyhow::bail!("HTTP {status} on POST {path}: {body}");
         }
@@ -317,7 +344,11 @@ async fn handle_request(client: &VeynClient, req: RpcRequest) -> RpcResponse {
         Ok(v) => RpcResponse::ok(id, v),
         Err(e) => {
             error!("{e:#}");
-            let code = if e.to_string().contains("method not found") { -32601 } else { -32000 };
+            let code = if e.to_string().contains("method not found") {
+                -32601
+            } else {
+                -32000
+            };
             RpcResponse::err(id, code, format!("{e:#}"))
         }
     }
