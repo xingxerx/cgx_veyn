@@ -19,14 +19,16 @@ pub async fn run(state: AppState, event_tx: mpsc::Sender<VeynEvent>, timeout_mil
     // Local cache of presence states so we only emit on transitions.
     let mut local: HashMap<String, PresenceState> = HashMap::new();
 
-    info!(timeout_ms = timeout_millis, "presence detection task started");
+    info!(
+        timeout_ms = timeout_millis,
+        "presence detection task started"
+    );
 
     loop {
         ticker.tick().await;
 
         let now = Utc::now().timestamp_millis();
-        let devices: Vec<VeynDevice> =
-            state.devices.lock().unwrap().values().cloned().collect();
+        let devices: Vec<VeynDevice> = state.devices.lock().unwrap().values().cloned().collect();
 
         for device in &devices {
             let new_state = if now - device.last_seen < timeout_millis {
@@ -51,12 +53,15 @@ pub async fn run(state: AppState, event_tx: mpsc::Sender<VeynEvent>, timeout_mil
             );
 
             // Emit a VeynEvent so the transition appears in the stream.
-            let value = if new_state == PresenceState::Present { 1.0 } else { 0.0 };
-            let event = VeynEvent::new(&device.id, "presence", "presence", value, "")
-                .with_meta(
-                    "presence_state",
-                    serde_json::to_value(&new_state).unwrap_or_default(),
-                );
+            let value = if new_state == PresenceState::Present {
+                1.0
+            } else {
+                0.0
+            };
+            let event = VeynEvent::new(&device.id, "presence", "presence", value, "").with_meta(
+                "presence_state",
+                serde_json::to_value(&new_state).unwrap_or_default(),
+            );
             let _ = event_tx.send(event).await;
 
             state.presence.lock().unwrap().insert(

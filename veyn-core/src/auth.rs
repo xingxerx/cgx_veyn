@@ -2,11 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use axum::{
-    extract::Request,
-    extract::State,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
+    extract::Request, extract::State, http::StatusCode, middleware::Next, response::Response,
 };
 use rand::Rng;
 use tracing::{info, warn};
@@ -25,9 +21,7 @@ pub fn token_path() -> PathBuf {
 }
 
 pub fn load_or_create_token(custom_path: Option<&str>) -> Result<String> {
-    let path = custom_path
-        .map(PathBuf::from)
-        .unwrap_or_else(token_path);
+    let path = custom_path.map(PathBuf::from).unwrap_or_else(token_path);
 
     if path.exists() {
         let token = std::fs::read_to_string(&path)?.trim().to_string();
@@ -128,7 +122,11 @@ pub fn append_audit_log(path: Option<&str>, entry: &str) {
     let ts = chrono::Utc::now().to_rfc3339();
     let line = format!("{} {}\n", ts, entry);
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = f.write_all(line.as_bytes());
     }
 }

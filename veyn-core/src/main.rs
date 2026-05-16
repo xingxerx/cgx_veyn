@@ -121,8 +121,8 @@ async fn main() -> Result<()> {
     }
     for plugin in plugin_adapters {
         state.register_plugin(PluginInfo {
-            name:        plugin.manifest.plugin.name.clone(),
-            version:     plugin.manifest.plugin.version.clone(),
+            name: plugin.manifest.plugin.name.clone(),
+            version: plugin.manifest.plugin.version.clone(),
             description: plugin.manifest.plugin.description.clone(),
         });
         spawn_adapter(plugin, event_tx.clone());

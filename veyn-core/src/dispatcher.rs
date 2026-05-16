@@ -31,7 +31,9 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
     info!("dispatcher started — JSONL log: {}", jsonl_path);
 
     while let Some(event) = rx.recv().await {
-        state.raw_event_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        state
+            .raw_event_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if !engine.should_emit(&event) {
             continue;
@@ -66,8 +68,7 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
 
         let (intent, confidence) = engine.synthesize(&metric_state);
 
-        let active_devices: Vec<String> =
-            state.devices.lock().unwrap().keys().cloned().collect();
+        let active_devices: Vec<String> = state.devices.lock().unwrap().keys().cloned().collect();
 
         let deltas: Vec<StateDelta> = state
             .latest_metrics
@@ -76,20 +77,20 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
             .values()
             .map(|e| StateDelta {
                 device_id: e.device_id.clone(),
-                metric:    e.metric.clone(),
-                value:     e.value,
-                unit:      e.unit.clone(),
-                ts:        e.ts,
+                metric: e.metric.clone(),
+                value: e.value,
+                unit: e.unit.clone(),
+                ts: e.ts,
             })
             .collect();
 
         let snapshot = ContextSnapshot {
-            timestamp_ms:   chrono::Utc::now().timestamp_millis(),
-            session_id:     (*state.session_id).clone(),
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+            session_id: (*state.session_id).clone(),
             intent,
             confidence,
             active_devices,
-            state_deltas:   deltas,
+            state_deltas: deltas,
         };
 
         state.update_context(snapshot);

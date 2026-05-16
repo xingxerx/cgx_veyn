@@ -106,7 +106,8 @@ impl CompressionEngine {
         let key = (event.device_id.clone(), event.metric.clone());
         let now = Instant::now();
 
-        let epsilon = self.epsilons
+        let epsilon = self
+            .epsilons
             .get(&event.metric)
             .copied()
             .unwrap_or(DEFAULT_EPSILON);
@@ -141,11 +142,11 @@ impl CompressionEngine {
     pub fn synthesize(&self, state: &HashMap<String, f64>) -> (String, f64) {
         for rule in &self.rules {
             if rule.conditions.iter().all(|c| {
-                state.get(&c.metric).map_or(false, |&v| match c.op.as_str() {
-                    "above"  => v > c.threshold,
-                    "below"  => v < c.threshold,
+                state.get(&c.metric).is_some_and(|&v| match c.op.as_str() {
+                    "above" => v > c.threshold,
+                    "below" => v < c.threshold,
                     "equals" => (v - c.threshold).abs() < 0.01,
-                    _        => false,
+                    _ => false,
                 })
             }) {
                 return (rule.intent.clone(), rule.confidence);

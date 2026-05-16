@@ -165,52 +165,114 @@ fn default_epsilons() -> HashMap<String, f64> {
 
 // ── Builder ───────────────────────────────────────────────────────────────────
 
-pub fn load(
-    toml_path: Option<&str>,
-    cli_port: Option<u16>,
-    cli_no_auth: bool,
-) -> Result<Config> {
+pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -> Result<Config> {
     let file = load_toml_file(toml_path)?;
     let mut cfg = Config::default();
 
     // Apply TOML values.
-    if let Some(p) = file.server.port                        { cfg.api_port = p; }
-    if let Some(p) = file.server.healthkit_port             { cfg.healthkit_port = p; }
-    if let Some(v) = file.security.require_auth             { cfg.require_auth = v; }
-    if let Some(v) = file.security.token_path               { cfg.token_path = Some(v); }
-    if let Some(v) = file.security.cors_origins             { cfg.cors_origins = v; }
-    if let Some(v) = file.security.audit_log_path           { cfg.audit_log_path = Some(v); }
-    if let Some(v) = file.security.strip_raw_hid            { cfg.strip_raw_hid = v; }
-    if let Some(v) = file.adapters.mock                     { cfg.mock_mode = v; }
-    if let Some(v) = file.adapters.ble                      { cfg.ble_enabled = v; }
-    if let Some(v) = file.adapters.eeg                      { cfg.eeg_enabled = v; }
-    if let Some(v) = file.adapters.osc_port                 { cfg.osc_port = v; }
-    if let Some(v) = file.logging.jsonl_path                { cfg.jsonl_path = v; }
-    if let Some(v) = file.logging.level                     { cfg.log_level = v; }
-    if let Some(v) = file.plugins.dir                       { cfg.plugins_dir = v; }
-    if let Some(v) = file.mqtt.url                          { cfg.mqtt_url = Some(v); }
-    if let Some(v) = file.presence.timeout_secs             { cfg.presence_timeout_secs = v; }
-    if let Some(v) = file.compression.rules_path            { cfg.rules_path = v; }
-    if let Some(v) = file.compression.context_history_size  { cfg.context_history_size = v; }
-    if let Some(v) = file.compression.debounce_ms           { cfg.debounce_ms.extend(v); }
-    if let Some(v) = file.compression.epsilons              { cfg.epsilons.extend(v); }
+    if let Some(p) = file.server.port {
+        cfg.api_port = p;
+    }
+    if let Some(p) = file.server.healthkit_port {
+        cfg.healthkit_port = p;
+    }
+    if let Some(v) = file.security.require_auth {
+        cfg.require_auth = v;
+    }
+    if let Some(v) = file.security.token_path {
+        cfg.token_path = Some(v);
+    }
+    if let Some(v) = file.security.cors_origins {
+        cfg.cors_origins = v;
+    }
+    if let Some(v) = file.security.audit_log_path {
+        cfg.audit_log_path = Some(v);
+    }
+    if let Some(v) = file.security.strip_raw_hid {
+        cfg.strip_raw_hid = v;
+    }
+    if let Some(v) = file.adapters.mock {
+        cfg.mock_mode = v;
+    }
+    if let Some(v) = file.adapters.ble {
+        cfg.ble_enabled = v;
+    }
+    if let Some(v) = file.adapters.eeg {
+        cfg.eeg_enabled = v;
+    }
+    if let Some(v) = file.adapters.osc_port {
+        cfg.osc_port = v;
+    }
+    if let Some(v) = file.logging.jsonl_path {
+        cfg.jsonl_path = v;
+    }
+    if let Some(v) = file.logging.level {
+        cfg.log_level = v;
+    }
+    if let Some(v) = file.plugins.dir {
+        cfg.plugins_dir = v;
+    }
+    if let Some(v) = file.mqtt.url {
+        cfg.mqtt_url = Some(v);
+    }
+    if let Some(v) = file.presence.timeout_secs {
+        cfg.presence_timeout_secs = v;
+    }
+    if let Some(v) = file.compression.rules_path {
+        cfg.rules_path = v;
+    }
+    if let Some(v) = file.compression.context_history_size {
+        cfg.context_history_size = v;
+    }
+    if let Some(v) = file.compression.debounce_ms {
+        cfg.debounce_ms.extend(v);
+    }
+    if let Some(v) = file.compression.epsilons {
+        cfg.epsilons.extend(v);
+    }
 
     // Overlay environment variables.
-    if let Some(p) = env_u16("VEYN_PORT")          { cfg.api_port = p; }
-    if let Some(p) = env_u16("VEYN_HK_PORT")       { cfg.healthkit_port = p; }
-    if env_bool("VEYN_MOCK")                        { cfg.mock_mode = true; }
-    if env_bool("VEYN_BLE")                         { cfg.ble_enabled = true; }
-    if env_bool("VEYN_EEG")                         { cfg.eeg_enabled = true; }
-    if let Some(p) = env_u16("VEYN_OSC_PORT")      { cfg.osc_port = p; }
-    if let Ok(v) = std::env::var("VEYN_LOG")        { cfg.jsonl_path = v; }
-    if let Ok(v) = std::env::var("VEYN_PLUGINS_DIR") { cfg.plugins_dir = v; }
-    if let Ok(v) = std::env::var("VEYN_MQTT_URL")  { cfg.mqtt_url = Some(v); }
-    if let Some(v) = env_u64("VEYN_PRESENCE_TIMEOUT") { cfg.presence_timeout_secs = v; }
-    if env_bool("VEYN_NO_AUTH")                     { cfg.require_auth = false; }
+    if let Some(p) = env_u16("VEYN_PORT") {
+        cfg.api_port = p;
+    }
+    if let Some(p) = env_u16("VEYN_HK_PORT") {
+        cfg.healthkit_port = p;
+    }
+    if env_bool("VEYN_MOCK") {
+        cfg.mock_mode = true;
+    }
+    if env_bool("VEYN_BLE") {
+        cfg.ble_enabled = true;
+    }
+    if env_bool("VEYN_EEG") {
+        cfg.eeg_enabled = true;
+    }
+    if let Some(p) = env_u16("VEYN_OSC_PORT") {
+        cfg.osc_port = p;
+    }
+    if let Ok(v) = std::env::var("VEYN_LOG") {
+        cfg.jsonl_path = v;
+    }
+    if let Ok(v) = std::env::var("VEYN_PLUGINS_DIR") {
+        cfg.plugins_dir = v;
+    }
+    if let Ok(v) = std::env::var("VEYN_MQTT_URL") {
+        cfg.mqtt_url = Some(v);
+    }
+    if let Some(v) = env_u64("VEYN_PRESENCE_TIMEOUT") {
+        cfg.presence_timeout_secs = v;
+    }
+    if env_bool("VEYN_NO_AUTH") {
+        cfg.require_auth = false;
+    }
 
     // CLI overrides (highest priority).
-    if let Some(p) = cli_port { cfg.api_port = p; }
-    if cli_no_auth            { cfg.require_auth = false; }
+    if let Some(p) = cli_port {
+        cfg.api_port = p;
+    }
+    if cli_no_auth {
+        cfg.require_auth = false;
+    }
 
     Ok(cfg)
 }

@@ -136,11 +136,7 @@ pub enum DeviceState {
 }
 
 impl VeynDevice {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        source: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, source: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),

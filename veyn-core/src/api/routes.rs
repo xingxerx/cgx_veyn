@@ -23,30 +23,30 @@ const DASHBOARD: &str = include_str!("dashboard.html");
 pub fn router(state: AppState) -> Router {
     // Legacy unversioned routes kept for backward compat.
     let legacy = Router::new()
-        .route("/",                 get(dashboard))
-        .route("/health",           get(health))
-        .route("/events/recent",    get(events_recent))
-        .route("/metrics/:metric",  get(metrics_get))
-        .route("/devices",          get(devices_list))
-        .route("/plugins",          get(plugins_list))
-        .route("/stream",           get(ws_stream))
-        .route("/notify",           post(notify_post))
-        .route("/presence",         get(presence_get))
-        .route("/gestures/recent",  get(gestures_recent));
+        .route("/", get(dashboard))
+        .route("/health", get(health))
+        .route("/events/recent", get(events_recent))
+        .route("/metrics/:metric", get(metrics_get))
+        .route("/devices", get(devices_list))
+        .route("/plugins", get(plugins_list))
+        .route("/stream", get(ws_stream))
+        .route("/notify", post(notify_post))
+        .route("/presence", get(presence_get))
+        .route("/gestures/recent", get(gestures_recent));
 
     // Versioned /v1/ routes.
     let v1 = Router::new()
-        .route("/v1/health",              get(health))
-        .route("/v1/events/recent",       get(events_recent))
-        .route("/v1/metrics/:metric",     get(metrics_get))
-        .route("/v1/devices",             get(devices_list))
-        .route("/v1/plugins",             get(plugins_list))
-        .route("/v1/stream",              get(ws_stream))
-        .route("/v1/notify",              post(notify_post))
-        .route("/v1/presence",            get(presence_get))
-        .route("/v1/gestures/recent",     get(gestures_recent))
-        .route("/v1/context/current",     get(context_current))
-        .route("/v1/context/history",     get(context_history));
+        .route("/v1/health", get(health))
+        .route("/v1/events/recent", get(events_recent))
+        .route("/v1/metrics/:metric", get(metrics_get))
+        .route("/v1/devices", get(devices_list))
+        .route("/v1/plugins", get(plugins_list))
+        .route("/v1/stream", get(ws_stream))
+        .route("/v1/notify", post(notify_post))
+        .route("/v1/presence", get(presence_get))
+        .route("/v1/gestures/recent", get(gestures_recent))
+        .route("/v1/context/current", get(context_current))
+        .route("/v1/context/history", get(context_history));
 
     legacy.merge(v1).with_state(state)
 }
@@ -100,12 +100,7 @@ async fn metrics_get(
     State(state): State<AppState>,
     Path(metric): Path<String>,
 ) -> impl IntoResponse {
-    let found = state
-        .latest_metrics
-        .lock()
-        .unwrap()
-        .get(&metric)
-        .cloned();
+    let found = state.latest_metrics.lock().unwrap().get(&metric).cloned();
 
     match found {
         Some(e) => (
@@ -189,13 +184,7 @@ async fn context_history(
 fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
     let now = chrono::Utc::now().timestamp_millis();
     let metrics = state.latest_metrics.lock().unwrap();
-    let devices: Vec<String> = state
-        .devices
-        .lock()
-        .unwrap()
-        .keys()
-        .cloned()
-        .collect();
+    let devices: Vec<String> = state.devices.lock().unwrap().keys().cloned().collect();
 
     let state_map: std::collections::HashMap<String, f64> = metrics
         .values()
@@ -206,10 +195,10 @@ fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
         .values()
         .map(|e| StateDelta {
             device_id: e.device_id.clone(),
-            metric:    e.metric.clone(),
-            value:     e.value,
-            unit:      e.unit.clone(),
-            ts:        e.ts,
+            metric: e.metric.clone(),
+            value: e.value,
+            unit: e.unit.clone(),
+            ts: e.ts,
         })
         .collect();
 
@@ -217,12 +206,12 @@ fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
     let (intent, confidence) = synthesize_intent_builtin(&state_map);
 
     ContextSnapshot {
-        timestamp_ms:   now,
-        session_id:     (*state.session_id).clone(),
+        timestamp_ms: now,
+        session_id: (*state.session_id).clone(),
         intent,
         confidence,
         active_devices: devices,
-        state_deltas:   deltas,
+        state_deltas: deltas,
     }
 }
 
@@ -232,7 +221,7 @@ fn synthesize_intent_builtin(state: &std::collections::HashMap<String, f64>) -> 
             return ("user under physical stress".to_string(), 0.8);
         }
         if hr < 60.0 {
-            if state.get("hrv").map_or(false, |&h| h > 50.0) {
+            if state.get("hrv").is_some_and(|&h| h > 50.0) {
                 return ("user in calm/resting state".to_string(), 0.85);
             }
             return ("user in low-activity state".to_string(), 0.7);
@@ -244,10 +233,7 @@ fn synthesize_intent_builtin(state: &std::collections::HashMap<String, f64>) -> 
 
 // ── GET /stream  (WebSocket) ──────────────────────────────────────────────────
 
-async fn ws_stream(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn ws_stream(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -264,8 +250,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         .collect();
 
     for event in &replay {
-        let Ok(json) = serde_json::to_string(event) else { continue };
-        if socket.send(Message::Text(json.into())).await.is_err() {
+        let Ok(json) = serde_json::to_string(event) else {
+            continue;
+        };
+        if socket.send(Message::Text(json)).await.is_err() {
             return;
         }
     }
@@ -283,7 +271,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             Ok(j) => j,
                             Err(_) => continue,
                         };
-                        if socket.send(Message::Text(json.into())).await.is_err() {
+                        if socket.send(Message::Text(json)).await.is_err() {
                             break;
                         }
                     }
@@ -292,7 +280,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 }
             }
             _ = ping_ticker.tick() => {
-                if socket.send(Message::Ping(vec![].into())).await.is_err() {
+                if socket.send(Message::Ping(vec![])).await.is_err() {
                     break;
                 }
             }
@@ -326,7 +314,10 @@ async fn notify_post(
     }
     let id = notif.id.clone();
     let _ = state.notification_tx.send(notif);
-    (StatusCode::ACCEPTED, Json(json!({ "id": id, "status": "queued" })))
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({ "id": id, "status": "queued" })),
+    )
 }
 
 async fn presence_get(State(state): State<AppState>) -> Json<serde_json::Value> {

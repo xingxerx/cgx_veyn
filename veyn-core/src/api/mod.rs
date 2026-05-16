@@ -11,8 +11,8 @@ use axum::{
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing::info;
 
-use crate::auth;
 use self::state::AppState;
+use crate::auth;
 
 pub async fn serve(
     state: AppState,
@@ -85,10 +85,7 @@ fn build_cors(origins: &[String], port: u16) -> CorsLayer {
             .allow_methods(allow_methods)
             .allow_headers(allow_headers)
     } else {
-        let parsed: Vec<HeaderValue> = origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect();
+        let parsed: Vec<HeaderValue> = origins.iter().filter_map(|o| o.parse().ok()).collect();
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(parsed))
             .allow_methods(allow_methods)

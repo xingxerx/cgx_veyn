@@ -23,13 +23,13 @@ impl VeynAdapter for MockAdapter {
         info!("mock adapter started — emitting synthetic biometric events");
 
         let metrics: &[(&str, f64, f64, &str)] = &[
-            ("heart_rate",       55.0, 100.0, "bpm"),
-            ("hrv",              20.0,  80.0, "ms"),
-            ("spo2",             95.0, 100.0, "%"),
-            ("steps",             0.0, 500.0, "steps"),
-            ("respiratory_rate", 12.0,  20.0, "brpm"),
-            ("skin_temperature", 35.5,  37.5, "°C"),
-            ("active_energy",     0.0,  50.0, "kcal"),
+            ("heart_rate", 55.0, 100.0, "bpm"),
+            ("hrv", 20.0, 80.0, "ms"),
+            ("spo2", 95.0, 100.0, "%"),
+            ("steps", 0.0, 500.0, "steps"),
+            ("respiratory_rate", 12.0, 20.0, "brpm"),
+            ("skin_temperature", 35.5, 37.5, "°C"),
+            ("active_energy", 0.0, 50.0, "kcal"),
         ];
 
         loop {

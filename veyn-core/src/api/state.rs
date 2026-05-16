@@ -27,23 +27,23 @@ const NOTIF_CAP: usize = 64;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub recent_events:     Arc<Mutex<VecDeque<VeynEvent>>>,
-    pub latest_metrics:    Arc<Mutex<HashMap<String, VeynEvent>>>,
-    pub devices:           Arc<Mutex<HashMap<String, VeynDevice>>>,
-    pub broadcast_tx:      broadcast::Sender<VeynEvent>,
-    pub notification_tx:   broadcast::Sender<VeynNotification>,
-    pub presence:          Arc<Mutex<HashMap<String, PresenceInfo>>>,
-    pub start_time:        Arc<Instant>,
+    pub recent_events: Arc<Mutex<VecDeque<VeynEvent>>>,
+    pub latest_metrics: Arc<Mutex<HashMap<String, VeynEvent>>>,
+    pub devices: Arc<Mutex<HashMap<String, VeynDevice>>>,
+    pub broadcast_tx: broadcast::Sender<VeynEvent>,
+    pub notification_tx: broadcast::Sender<VeynNotification>,
+    pub presence: Arc<Mutex<HashMap<String, PresenceInfo>>>,
+    pub start_time: Arc<Instant>,
     /// Filtered event count (after compression).
-    pub event_count:       Arc<AtomicU64>,
+    pub event_count: Arc<AtomicU64>,
     /// Total raw event count (before compression).
-    pub raw_event_count:   Arc<AtomicU64>,
-    pub plugins:           Arc<Mutex<Vec<PluginInfo>>>,
-    pub auth_token:        Arc<String>,
-    pub config:            Arc<Config>,
-    pub session_id:        Arc<String>,
-    pub context_history:   Arc<Mutex<VecDeque<ContextSnapshot>>>,
-    pub latest_context:    Arc<Mutex<Option<ContextSnapshot>>>,
+    pub raw_event_count: Arc<AtomicU64>,
+    pub plugins: Arc<Mutex<Vec<PluginInfo>>>,
+    pub auth_token: Arc<String>,
+    pub config: Arc<Config>,
+    pub session_id: Arc<String>,
+    pub context_history: Arc<Mutex<VecDeque<ContextSnapshot>>>,
+    pub latest_context: Arc<Mutex<Option<ContextSnapshot>>>,
     pub compression_ratio: Arc<Mutex<f64>>,
 }
 
@@ -55,21 +55,21 @@ impl AppState {
         let history_cap = config.context_history_size;
         let config = Arc::new(config);
         Self {
-            recent_events:     Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_CAP))),
-            latest_metrics:    Arc::new(Mutex::new(HashMap::new())),
-            devices:           Arc::new(Mutex::new(HashMap::new())),
+            recent_events: Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_CAP))),
+            latest_metrics: Arc::new(Mutex::new(HashMap::new())),
+            devices: Arc::new(Mutex::new(HashMap::new())),
             broadcast_tx,
             notification_tx,
-            presence:          Arc::new(Mutex::new(HashMap::new())),
-            start_time:        Arc::new(Instant::now()),
-            event_count:       Arc::new(AtomicU64::new(0)),
-            raw_event_count:   Arc::new(AtomicU64::new(0)),
-            plugins:           Arc::new(Mutex::new(Vec::new())),
-            auth_token:        Arc::new(auth_token),
+            presence: Arc::new(Mutex::new(HashMap::new())),
+            start_time: Arc::new(Instant::now()),
+            event_count: Arc::new(AtomicU64::new(0)),
+            raw_event_count: Arc::new(AtomicU64::new(0)),
+            plugins: Arc::new(Mutex::new(Vec::new())),
+            auth_token: Arc::new(auth_token),
             config,
-            session_id:        Arc::new(session_id),
-            context_history:   Arc::new(Mutex::new(VecDeque::with_capacity(history_cap))),
-            latest_context:    Arc::new(Mutex::new(None)),
+            session_id: Arc::new(session_id),
+            context_history: Arc::new(Mutex::new(VecDeque::with_capacity(history_cap))),
+            latest_context: Arc::new(Mutex::new(None)),
             compression_ratio: Arc::new(Mutex::new(1.0)),
         }
     }
@@ -84,11 +84,9 @@ impl AppState {
 
         {
             let mut devices = self.devices.lock().unwrap();
-            let entry = devices
-                .entry(event.device_id.clone())
-                .or_insert_with(|| {
-                    VeynDevice::new(&event.device_id, &event.device_id, &event.source)
-                });
+            let entry = devices.entry(event.device_id.clone()).or_insert_with(|| {
+                VeynDevice::new(&event.device_id, &event.device_id, &event.source)
+            });
             entry.state = DeviceState::Connected;
             entry.last_seen = Utc::now().timestamp_millis();
         }
