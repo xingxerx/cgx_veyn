@@ -1,2 +1,5 @@
-target/
-veyn-events.jsonl
+```
+# Configuration
+!.cargo/
+.cargo/config.toml
+```
