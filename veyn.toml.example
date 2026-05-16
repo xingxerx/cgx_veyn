@@ -1,0 +1,79 @@
+# VEYN daemon configuration
+# Default search path: ./veyn.toml → ~/.config/veyn/veyn.toml
+# Override with: veyn-core --config /path/to/veyn.toml
+#
+# All keys are optional; unset keys fall back to defaults.
+
+[server]
+# REST + WebSocket API port
+port = 7700
+# HealthKit TCP relay port
+healthkit_port = 7701
+
+[security]
+# Require Bearer token on all connections (strongly recommended: true)
+require_auth = true
+# Custom token file location (default: ~/.local/share/veyn/token)
+# token_path = "~/.local/share/veyn/token"
+# Cross-origin origins allowed to connect (empty = localhost only)
+cors_origins = []
+# Audit log path (default: ~/.local/share/veyn/audit.log)
+# audit_log_path = "~/.local/share/veyn/audit.log"
+# Strip raw keystroke content; expose only semantic intent (recommended: true)
+strip_raw_hid = true
+
+[adapters]
+# Emit synthetic biometric events (for development / CI)
+mock = false
+# Enable Bluetooth Low Energy heart-rate adapter
+ble = false
+# Enable EEG/OSC adapter
+eeg = false
+# UDP port for OSC input
+osc_port = 9000
+
+[logging]
+# Tracing level: error | warn | info | debug | trace
+level = "info"
+# Append-only JSONL event audit log
+jsonl_path = "veyn-events.jsonl"
+
+[plugins]
+# Directory scanned for WASM plugin manifests
+dir = "plugins"
+
+[mqtt]
+# MQTT broker URL — comment out to disable
+# url = "mqtt://localhost:1883"
+
+[presence]
+# Seconds without an event before a device is marked absent
+timeout_secs = 30
+
+[compression]
+# Path to hot-reloadable semantic rules file
+rules_path = "rules.toml"
+# Maximum number of context snapshots to keep in history
+context_history_size = 32
+
+# Per-metric temporal debounce (milliseconds).
+# Events arriving faster than this window are dropped.
+[compression.debounce_ms]
+heart_rate       = 1000
+hrv              = 2000
+spo2             = 5000
+steps            = 500
+respiratory_rate = 3000
+skin_temperature = 10000
+battery          = 60000
+
+# Per-metric magnitude thresholds.
+# Changes smaller than epsilon are treated as noise and dropped.
+[compression.epsilons]
+heart_rate       = 1.0
+hrv              = 2.0
+spo2             = 0.5
+steps            = 10.0
+respiratory_rate = 0.5
+skin_temperature = 0.1
+battery          = 1.0
