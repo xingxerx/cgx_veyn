@@ -1,0 +1,65 @@
+# VEYN Semantic Synthesis Rules
+# Hot-reloaded every 30 s — no daemon restart required.
+#
+# Rules are evaluated in order; the first matching rule wins.
+# If no rule matches, intent defaults to "observing" with confidence 0.5.
+#
+# Condition operators: "above" | "below" | "equals"
+
+[[rules]]
+name       = "physical_stress"
+intent     = "user under physical stress"
+confidence = 0.85
+[[rules.conditions]]
+metric    = "heart_rate"
+op        = "above"
+threshold = 100.0
+
+[[rules]]
+name       = "deep_focus_calm"
+intent     = "user in deep focus or calm state"
+confidence = 0.88
+[[rules.conditions]]
+metric    = "heart_rate"
+op        = "below"
+threshold = 60.0
+[[rules.conditions]]
+metric    = "hrv"
+op        = "above"
+threshold = 50.0
+
+[[rules]]
+name       = "resting"
+intent     = "user resting or sleeping"
+confidence = 0.80
+[[rules.conditions]]
+metric    = "heart_rate"
+op        = "below"
+threshold = 55.0
+
+[[rules]]
+name       = "moderate_activity"
+intent     = "user in moderate physical activity"
+confidence = 0.75
+[[rules.conditions]]
+metric    = "steps"
+op        = "above"
+threshold = 50.0
+
+[[rules]]
+name       = "elevated_spo2_concern"
+intent     = "user showing low blood oxygen — possible health concern"
+confidence = 0.90
+[[rules.conditions]]
+metric    = "spo2"
+op        = "below"
+threshold = 92.0
+
+[[rules]]
+name       = "normal_activity"
+intent     = "user in normal activity state"
+confidence = 0.70
+[[rules.conditions]]
+metric    = "heart_rate"
+op        = "above"
+threshold = 60.0

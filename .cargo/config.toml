@@ -1,0 +1,31 @@
+# VEYN — cargo workspace defaults
+
+[build]
+# Uncomment to cross-compile to Raspberry Pi 4 (aarch64 Linux).
+# target = "aarch64-unknown-linux-gnu"
+
+# WASM plugins must be compiled separately:
+#   cargo build --target wasm32-unknown-unknown --release -p garmin-connect
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+
+[profile.dev]
+# Fast incremental builds in development.
+opt-level = 0
+
+[env]
+# Default log level when RUST_LOG is not set.
+# Override per-session: RUST_LOG=debug cargo run -p veyn-core
+VEYN_LOG_DEFAULT = "info"
+
+[target.x86_64-unknown-linux-gnu]
+# Ensures pkg-config finds system libs (dbus, etc.) on Ubuntu/Debian.
+# sudo apt install libdbus-1-dev pkg-config
+rustflags = []
+
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"

@@ -37,8 +37,8 @@ impl veyn_adapters::VeynAdapter for PluginAdapter {
         let name = manifest.plugin.name.clone();
 
         // Load the WASM module on a blocking thread (wasmtime is synchronous).
-        let mut runtime = tokio::task::spawn_blocking(move || PluginRuntime::load(manifest))
-            .await??;
+        let mut runtime =
+            tokio::task::spawn_blocking(move || PluginRuntime::load(manifest)).await??;
 
         info!(plugin = %name, interval_secs = poll_interval_secs, "plugin adapter started");
 

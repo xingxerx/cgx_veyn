@@ -8,9 +8,7 @@ use veyn_schemas::VeynEvent;
 /// Parse an `mqtt://host:port` URL into (host, port).
 fn parse_url(url: &str) -> Result<(String, u16)> {
     let stripped = url.strip_prefix("mqtt://").unwrap_or(url);
-    let (host, port_str) = stripped
-        .rsplit_once(':')
-        .unwrap_or((stripped, "1883"));
+    let (host, port_str) = stripped.rsplit_once(':').unwrap_or((stripped, "1883"));
     let port: u16 = port_str
         .parse()
         .with_context(|| format!("invalid MQTT port in URL: {}", url))?;

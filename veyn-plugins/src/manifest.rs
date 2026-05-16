@@ -67,8 +67,7 @@ pub fn discover_plugins(plugins_dir: &str) -> Vec<PluginManifest> {
 }
 
 fn load_manifest(path: &Path) -> Result<PluginManifest> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {:?}", path))?;
+    let content = std::fs::read_to_string(path).with_context(|| format!("reading {:?}", path))?;
     let mut manifest: PluginManifest =
         toml::from_str(&content).with_context(|| format!("parsing {:?}", path))?;
 

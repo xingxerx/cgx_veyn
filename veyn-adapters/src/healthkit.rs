@@ -22,7 +22,10 @@ pub struct HealthKitAdapter {
 
 impl HealthKitAdapter {
     pub fn new(port: u16, notification_tx: broadcast::Sender<VeynNotification>) -> Self {
-        Self { port, notification_tx }
+        Self {
+            port,
+            notification_tx,
+        }
     }
 }
 

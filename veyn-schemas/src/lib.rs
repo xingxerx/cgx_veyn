@@ -4,6 +4,27 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Semantic context snapshot — the AI-ready world-state summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSnapshot {
+    pub timestamp_ms: i64,
+    pub session_id: String,
+    pub intent: String,
+    pub confidence: f64,
+    pub active_devices: Vec<String>,
+    pub state_deltas: Vec<StateDelta>,
+}
+
+/// One metric observation included in a context snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateDelta {
+    pub device_id: String,
+    pub metric: String,
+    pub value: f64,
+    pub unit: String,
+    pub ts: i64,
+}
+
 /// Notification sent from the daemon to a companion device (e.g. Apple Watch).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VeynNotification {
@@ -115,11 +136,7 @@ pub enum DeviceState {
 }
 
 impl VeynDevice {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        source: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, source: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),

@@ -190,9 +190,8 @@ where
     if let Some(bat) = &bat_char {
         if let Ok(data) = peripheral.read(bat).await {
             if let Some(&level) = data.first() {
-                let event =
-                    VeynEvent::new(&device_id, "ble", "battery", f64::from(level), "%")
-                        .with_meta("device_name", serde_json::Value::String(name.clone()));
+                let event = VeynEvent::new(&device_id, "ble", "battery", f64::from(level), "%")
+                    .with_meta("device_name", serde_json::Value::String(name.clone()));
                 let _ = tx.send(event).await;
                 debug!(device = %name, battery = level, "battery level read");
             }
@@ -204,9 +203,8 @@ where
     while let Some(n) = notifications.next().await {
         if n.uuid == HR_CHAR {
             if let Some(bpm) = decode_hr_measurement(&n.value) {
-                let event =
-                    VeynEvent::new(&device_id, "ble", "heart_rate", f64::from(bpm), "bpm")
-                        .with_meta("device_name", serde_json::Value::String(name.clone()));
+                let event = VeynEvent::new(&device_id, "ble", "heart_rate", f64::from(bpm), "bpm")
+                    .with_meta("device_name", serde_json::Value::String(name.clone()));
                 if tx.send(event).await.is_err() {
                     break;
                 }
