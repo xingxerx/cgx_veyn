@@ -142,35 +142,32 @@ impl PluginRuntime {
             .ok_or_else(|| anyhow!("plugin '{}' has no 'memory' export", manifest.plugin.name))?;
 
         // Allocate the poll output buffer inside the guest.
-        let alloc =
-            instance.get_typed_func::<u32, u32>(&mut store, "veyn_alloc")?;
+        let alloc = instance.get_typed_func::<u32, u32>(&mut store, "veyn_alloc")?;
         let poll_buf_ptr = alloc.call(&mut store, POLL_BUF)?;
 
         // Serialize config and write it into a temporary guest allocation.
-        let config_json = serde_json::to_string(&manifest.config)
-            .unwrap_or_else(|_| "{}".to_string());
+        let config_json =
+            serde_json::to_string(&manifest.config).unwrap_or_else(|_| "{}".to_string());
         let config_bytes = config_json.as_bytes();
         let config_ptr = alloc.call(&mut store, config_bytes.len() as u32)?;
         memory.write(&mut store, config_ptr as usize, config_bytes)?;
 
-        let init =
-            instance.get_typed_func::<(u32, u32), i32>(&mut store, "veyn_init")?;
+        let init = instance.get_typed_func::<(u32, u32), i32>(&mut store, "veyn_init")?;
         let rc = init.call(&mut store, (config_ptr, config_bytes.len() as u32))?;
 
         // Free the temporary config buffer.
-        let free =
-            instance.get_typed_func::<(u32, u32), ()>(&mut store, "veyn_free")?;
+        let free = instance.get_typed_func::<(u32, u32), ()>(&mut store, "veyn_free")?;
         free.call(&mut store, (config_ptr, config_bytes.len() as u32))?;
 
         if rc != 0 {
             return Err(anyhow!(
                 "plugin '{}' veyn_init returned {}",
-                manifest.plugin.name, rc
+                manifest.plugin.name,
+                rc
             ));
         }
 
-        let poll =
-            instance.get_typed_func::<(u32, u32), u32>(&mut store, "veyn_poll")?;
+        let poll = instance.get_typed_func::<(u32, u32), u32>(&mut store, "veyn_poll")?;
 
         tracing::info!(
             plugin  = %manifest.plugin.name,
@@ -189,25 +186,24 @@ impl PluginRuntime {
 
     /// Drive the plugin's poll function and decode any emitted events.
     pub fn poll_events(&mut self) -> Result<Vec<VeynEvent>> {
-        let bytes_written =
-            self.poll.call(&mut self.store, (self.poll_buf_ptr, POLL_BUF))?;
+        let bytes_written = self
+            .poll
+            .call(&mut self.store, (self.poll_buf_ptr, POLL_BUF))?;
 
         if bytes_written == 0 {
             return Ok(vec![]);
         }
 
         let data = self.memory.data(&self.store);
-        let slice = &data
-            [self.poll_buf_ptr as usize..self.poll_buf_ptr as usize + bytes_written as usize];
+        let slice =
+            &data[self.poll_buf_ptr as usize..self.poll_buf_ptr as usize + bytes_written as usize];
 
         let events = slice
             .split(|&b| b == b'\n')
             .filter(|line| !line.is_empty())
             .filter_map(|line| {
                 serde_json::from_slice::<VeynEvent>(line)
-                    .map_err(|e| {
-                        tracing::warn!(plugin = %self.name, "event decode error: {}", e)
-                    })
+                    .map_err(|e| tracing::warn!(plugin = %self.name, "event decode error: {}", e))
                     .ok()
             })
             .collect();
