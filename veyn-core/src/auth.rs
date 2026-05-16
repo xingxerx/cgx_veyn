@@ -1,7 +1,7 @@
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
+#[allow(unused_imports)]
 use anyhow::{bail, Context, Result};
 use axum::{
     extract::{Request, State},
@@ -21,8 +21,9 @@ pub fn token_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("/tmp"))
+                .unwrap_or_else(|_| std::env::temp_dir())
                 .join(".local/share")
         })
         .join("veyn")
@@ -68,9 +69,9 @@ pub fn load_or_create_token(custom_path: Option<&str>) -> Result<String> {
 }
 
 fn generate_token() -> Result<String> {
+    use rand::RngCore;
     let mut bytes = [0u8; 32];
-    let mut f = fs::File::open("/dev/urandom").context("open /dev/urandom")?;
-    f.read_exact(&mut bytes).context("read /dev/urandom")?;
+    rand::thread_rng().fill_bytes(&mut bytes);
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
@@ -87,6 +88,7 @@ fn write_token(path: &Path, token: &str) -> Result<()> {
 
 // ── Ownership / permission verification ───────────────────────────────────────
 
+#[cfg(unix)]
 fn current_uid() -> Option<u32> {
     let status = fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {
@@ -97,6 +99,7 @@ fn current_uid() -> Option<u32> {
     None
 }
 
+#[allow(unused_variables)]
 fn verify_dir_ownership(dir: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -118,6 +121,7 @@ fn verify_dir_ownership(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(unused_variables)]
 fn verify_file_ownership(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
