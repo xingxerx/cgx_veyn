@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod config;
 mod dispatcher;
 mod presence;
@@ -25,6 +26,12 @@ async fn main() -> Result<()> {
 
     let cfg = Config::default();
 
+    let token = auth::load_or_create_token()?;
+    info!(
+        token_path = %auth::token_path().display(),
+        "API token ready"
+    );
+
     info!(
         api_port        = cfg.api_port,
         healthkit_port  = cfg.healthkit_port,
@@ -38,7 +45,7 @@ async fn main() -> Result<()> {
     );
 
     let (event_tx, event_rx) = mpsc::channel::<VeynEvent>(1_024);
-    let state = AppState::new();
+    let state = AppState::new(token);
 
     // Dispatcher
     {
