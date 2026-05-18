@@ -23,11 +23,11 @@ VEYN is a 6-crate Cargo workspace:
 
 | Crate | Role |
 |---|---|
-| `veyn-schemas` | Shared types: `VeynEvent`, `ContextSnapshot`, `IntentCode`, `InteroSession`, `BaselineStats` |
+| `veyn-schemas` | Shared types: `VeynEvent`, `ContextSnapshot`, `IntentCode`, `MemoryRecord`, `BaselineStats` |
 | `veyn-adapters` | Signal adapters: BLE, EEG/OSC, HealthKit relay, evdev, hidraw, MIDI, serial, filesystem, MQTT, mock |
-| `veyn-core` | Daemon: event bus, `CompressionEngine`, `BaselineEngine`, `SessionManager`, SQLite storage, REST/WS/SSE API |
+| `veyn-core` | Daemon: event bus, `CompressionEngine`, `BaselineEngine`, `MemoryStore`, `SessionManager`, SQLite, REST/WS/SSE API |
 | `veyn-plugins` | WASM plugin host (wasmtime), device proxy layer, signature verification |
-| `veyn-mcp` | MCP server — exposes VEYN tools to local AI agents (Open WebUI, Jan.ai, etc.) |
+| `veyn-mcp` | MCP server — exposes VEYN tools to local AI agents; session bootstrap with biometric memory |
 | `sdk/` | TypeScript SDK (`sdk/ts/`), Python SDK (`sdk/py/`), Rust guest plugin SDK |
 
 ---
@@ -65,6 +65,16 @@ VEYN tracks a personal baseline for every `(device, metric)` pair over a 30-day 
   - `Avoidance` — HR z > 0.5, HRV z < -0.5, skin_temp z > 0.5
   - `Neutral` — no threshold met
 - **Named session recording** — `POST /v1/session/start` opens a named `InteroSession` with an optional annotation; all events during the session are written to SQLite with the session ID for full-resolution replay; `GET /v1/session/{id}/replay` returns the complete multi-channel timeline bypassing compression
+
+### Biometric Memory Layer
+
+VEYN maintains a persistent per-topic memory of physiological state across sessions, enabling AI agents to orient themselves at session start without explicit user prompting.
+
+- **Ambient writer** — background task that fires every 15 minutes (configurable), reads the in-memory context ring buffer, computes avg HR, avg HRV, dominant intent, and session duration, then writes one `Ambient` MemoryRecord to SQLite. Idle/no-signal windows are skipped; oldest ambient records are pruned when `max_records` is exceeded; semantic records are never auto-pruned.
+- **Semantic records** — AI agents write these explicitly via `POST /v1/memory` or the `veyn_write_memory` MCP tool. The daemon automatically attaches the current physiological state (HR, HRV, intent, confidence) at write time.
+- **`GET /v1/memory`** — query records by `topic`, `since`, `until`, `kind`, and `limit`.
+- **MCP session bootstrap** — on every `initialize` handshake, `veyn-mcp` auto-recalls the last 24 h of memory and embeds it in `serverInfo.context`. Every AI session starts pre-loaded with recent biometric history.
+- **`veyn_recall_memory`** / **`veyn_write_memory`** — two new MCP tools; `since` accepts human-readable strings like `"7d"`, `"24h"`, `"30d"`.
 
 ### Semantic Compression Engine
 
@@ -126,6 +136,8 @@ All adapters auto-restart on failure with exponential backoff.
 | `/v1/session/{id}/replay` | GET | Full-resolution event timeline from SQLite |
 | `/v1/session/{id}/export` | GET | Flat CSV export (`?format=csv`) |
 | `/v1/baseline/{device}/{metric}` | GET | `BaselineStats` including `sufficient` flag and z-score history |
+| `/v1/memory` | POST | Write a `Semantic` MemoryRecord; biometric state auto-attached from latest context |
+| `/v1/memory` | GET | Query MemoryRecords (`?topic=&since=&until=&kind=&limit=`) |
 | `/metrics` | GET | Prometheus metrics (events_raw_total, compression_ratio, active_devices, …) |
 | `/openapi.yaml` | GET | OpenAPI 3.0 specification |
 | `/stream` | GET (WS) | Raw live event WebSocket stream |
@@ -157,6 +169,11 @@ osc_port = 9000
 [plugins]
 dir = "plugins"
 allow_unsigned = false
+
+[memory]
+enabled = true
+ambient_interval_secs = 900
+max_records = 10000
 
 [compression]
 rules_path = "rules.toml"
@@ -236,7 +253,7 @@ veyn-core plugin install /path/to/plugin.wasm
 ## Development
 
 ```bash
-# Run all tests (34 tests including integration suite)
+# Run all tests (50 tests including integration suite)
 cargo test --workspace
 
 # Build release
@@ -252,7 +269,11 @@ The integration test suite spins up the daemon in mock mode, injects known metri
 
 ## MCP Integration
 
-`veyn-mcp` exposes VEYN as an MCP server for local AI agents. Works with any MCP-compatible client (Open WebUI, Jan.ai, etc.) running a local model such as Gemma 4 via Ollama. Available tools: `veyn_get_context`, `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`.
+`veyn-mcp` exposes VEYN as an MCP server for local AI agents. Works with any MCP-compatible client (Open WebUI, Jan.ai, etc.) running a local model such as Gemma 4 via Ollama.
+
+**Available tools:** `veyn_get_context`, `veyn_get_context_history`, `veyn_get_metric`, `veyn_list_devices`, `veyn_get_presence`, `veyn_send_notification`, `veyn_get_health`, `veyn_list_plugins`, `veyn_get_recent_events`, `veyn_get_gestures`, `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`, `veyn_write_memory`, `veyn_recall_memory`
+
+**Session bootstrap:** on every `initialize` handshake the MCP server automatically calls `veyn_recall_memory` (last 24 h, limit 5) and embeds the result in `serverInfo.context`. AI sessions start pre-loaded with recent biometric memory.
 
 ---
 

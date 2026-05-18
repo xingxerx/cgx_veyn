@@ -40,6 +40,8 @@ struct TomlFile {
     presence: TomlPresence,
     #[serde(default)]
     compression: TomlCompression,
+    #[serde(default)]
+    memory: TomlMemory,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -103,6 +105,13 @@ struct TomlCompression {
     context_tier: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct TomlMemory {
+    enabled: Option<bool>,
+    ambient_interval_secs: Option<u64>,
+    max_records: Option<usize>,
+}
+
 // ── Public Config ─────────────────────────────────────────────────────────────
 
 /// Resolved runtime configuration.
@@ -142,6 +151,15 @@ pub struct Config {
     /// Default context tier for the daemon; tokens may declare a ceiling equal
     /// to or below this level.
     pub context_tier: ContextTier,
+
+    // ── Memory layer ──────────────────────────────────────────────────────────
+    /// Enable the biometric memory layer (ambient writer + REST endpoints).
+    pub memory_enabled: bool,
+    /// How often the ambient writer fires (seconds).
+    pub memory_ambient_interval_secs: u64,
+    /// Maximum number of Ambient records to retain; oldest are pruned when exceeded.
+    /// Semantic records are never auto-pruned.
+    pub memory_max_records: usize,
 }
 
 impl Default for Config {
@@ -176,6 +194,9 @@ impl Default for Config {
             log_level: "info".to_string(),
             db_path: "veyn.db".to_string(),
             context_tier: ContextTier::Semantic,
+            memory_enabled: true,
+            memory_ambient_interval_secs: 900,
+            memory_max_records: 10_000,
         }
     }
 }
@@ -303,6 +324,15 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     }
     if let Some(v) = file.compression.context_tier {
         cfg.context_tier = parse_context_tier(&v);
+    }
+    if let Some(v) = file.memory.enabled {
+        cfg.memory_enabled = v;
+    }
+    if let Some(v) = file.memory.ambient_interval_secs {
+        cfg.memory_ambient_interval_secs = v;
+    }
+    if let Some(v) = file.memory.max_records {
+        cfg.memory_max_records = v;
     }
 
     // Overlay environment variables.

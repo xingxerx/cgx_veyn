@@ -76,6 +76,15 @@ dir = "plugins"
 # Seconds without an event before a device is marked absent
 timeout_secs = 30
 
+[memory]
+# Enable the biometric memory layer (ambient writer + REST + MCP tools)
+enabled = true
+# How often the ambient writer fires and stores a summary record (seconds)
+ambient_interval_secs = 900   # 15 minutes
+# Maximum number of Ambient records to retain; oldest are pruned when exceeded.
+# Semantic records written by the AI are never auto-pruned.
+max_records = 10000
+
 [compression]
 # Path to hot-reloadable semantic rules file
 rules_path = "rules.toml"

@@ -6,9 +6,15 @@ use veyn_schemas::{Session, VeynEvent};
 
 pub fn open(db_path: &str) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-    migrate(&conn)?;
+    open_connection(&conn)?;
     Ok(conn)
+}
+
+/// Apply pragmas and run migrations on an already-opened connection (useful for tests).
+pub fn open_connection(conn: &Connection) -> Result<()> {
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    migrate(conn)?;
+    Ok(())
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
@@ -48,6 +54,24 @@ fn migrate(conn: &Connection) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_baseline_lookup
             ON baseline_samples(device_id, metric, ts);
+
+        CREATE TABLE IF NOT EXISTS veyn_memory (
+            id                 TEXT PRIMARY KEY,
+            timestamp_ms       INTEGER NOT NULL,
+            session_id         TEXT    NOT NULL,
+            kind               TEXT    NOT NULL,
+            topic              TEXT    NOT NULL,
+            summary            TEXT    NOT NULL,
+            intent_at_time     TEXT,
+            confidence_at_time REAL,
+            hrv_at_time        REAL,
+            hr_at_time         REAL,
+            context_snapshot   TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_ts    ON veyn_memory(timestamp_ms);
+        CREATE INDEX IF NOT EXISTS idx_memory_topic ON veyn_memory(topic);
+        CREATE INDEX IF NOT EXISTS idx_memory_kind  ON veyn_memory(kind);
         ",
     )?;
     Ok(())

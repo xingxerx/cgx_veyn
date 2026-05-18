@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, info, warn};
+use chrono::Utc;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -160,9 +161,52 @@ fn tool_list() -> Value {
                 "name": "veyn_get_gestures",
                 "description": "Recent Apple Watch gesture events (crown scroll, tap) forwarded by the companion app.",
                 "inputSchema": { "type": "object", "properties": {}, "required": [] }
+            },
+            {
+                "name": "veyn_write_memory",
+                "description": "Record a semantic memory entry for a topic. Call this at the end of a meaningful session — the daemon automatically attaches the current biometric state (HRV, HR, intent, confidence).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "topic":   { "type": "string", "description": "Short label for the topic or session (e.g. 'code-review', 'meditation', 'meeting')." },
+                        "summary": { "type": "string", "description": "Concise summary of what happened, was decided, or was observed during this session." }
+                    },
+                    "required": ["topic", "summary"]
+                }
+            },
+            {
+                "name": "veyn_recall_memory",
+                "description": "Retrieve past memory records to orient the current session. Call at session start to pre-load recent biometric context. Accepts human-readable 'since' strings like '24h', '7d', '30d'.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "topic": { "type": "string",  "description": "Filter by topic label." },
+                        "since": { "type": "string",  "description": "Human-readable lookback window (e.g. '24h', '7d', '30d'). Defaults to '24h'." },
+                        "kind":  { "type": "string",  "description": "Filter by kind: 'ambient' or 'semantic'. Omit for all kinds." },
+                        "limit": { "type": "integer", "description": "Maximum records to return (default 20).", "default": 20 }
+                    },
+                    "required": []
+                }
             }
         ]
     })
+}
+
+/// Parse a human-readable duration string ("24h", "7d", "30d", "90m") into
+/// an absolute Unix-millisecond timestamp representing `now - duration`.
+fn parse_human_since(s: &str) -> i64 {
+    let now = chrono::Utc::now().timestamp_millis();
+    let s = s.trim().to_lowercase();
+    let ms: i64 = if let Some(n) = s.strip_suffix('d') {
+        n.parse::<i64>().unwrap_or(1) * 86_400_000
+    } else if let Some(n) = s.strip_suffix('h') {
+        n.parse::<i64>().unwrap_or(1) * 3_600_000
+    } else if let Some(n) = s.strip_suffix('m') {
+        n.parse::<i64>().unwrap_or(1) * 60_000
+    } else {
+        86_400_000 // default to 24 h
+    };
+    now - ms
 }
 
 #[derive(Clone)]
@@ -291,8 +335,57 @@ async fn dispatch_tool(client: &VeynClient, name: &str, args: &Value) -> Result<
         "veyn_list_plugins" => client.get("/v1/plugins").await,
         "veyn_get_recent_events" => client.get("/v1/events/recent").await,
         "veyn_get_gestures" => client.get("/v1/gestures/recent").await,
+        "veyn_write_memory" => {
+            let topic = args
+                .get("topic")
+                .and_then(Value::as_str)
+                .context("missing: topic")?;
+            let summary = args
+                .get("summary")
+                .and_then(Value::as_str)
+                .context("missing: summary")?;
+            client
+                .post("/v1/memory", json!({ "topic": topic, "summary": summary }))
+                .await
+        }
+        "veyn_recall_memory" => {
+            let mut parts: Vec<String> = Vec::new();
+
+            if let Some(topic) = args.get("topic").and_then(Value::as_str) {
+                parts.push(format!("topic={}", urlencoded(topic)));
+            }
+            let since_ms = args
+                .get("since")
+                .and_then(Value::as_str)
+                .map(parse_human_since)
+                .unwrap_or_else(|| Utc::now().timestamp_millis() - 86_400_000);
+            parts.push(format!("since={since_ms}"));
+
+            if let Some(kind) = args.get("kind").and_then(Value::as_str) {
+                if kind == "ambient" || kind == "semantic" {
+                    parts.push(format!("kind={kind}"));
+                }
+            }
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20);
+            parts.push(format!("limit={limit}"));
+
+            let path = format!("/v1/memory?{}", parts.join("&"));
+            client.get(&path).await
+        }
         _ => anyhow::bail!("unknown tool '{name}'"),
     }
+}
+
+fn urlencoded(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '~') {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u32)
+            }
+        })
+        .collect()
 }
 
 async fn handle_method(client: &VeynClient, method: &str, params: Value) -> Result<Value> {
@@ -304,10 +397,33 @@ async fn handle_method(client: &VeynClient, method: &str, params: Value) -> Resu
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
             info!(client = %client_name, "MCP initialize");
+
+            // Bootstrap: pre-load recent memory so every session starts with biometric context.
+            let since_ms = Utc::now().timestamp_millis() - 86_400_000; // last 24 h
+            let bootstrap_ctx = match client
+                .get(&format!("/v1/memory?since={since_ms}&limit=5"))
+                .await
+            {
+                Ok(data) => {
+                    let pretty = serde_json::to_string_pretty(&data).unwrap_or_default();
+                    info!("session bootstrap: embedded recent memory in serverInfo.context");
+                    Some(pretty)
+                }
+                Err(e) => {
+                    warn!("session bootstrap memory recall failed (daemon may be starting): {e}");
+                    None
+                }
+            };
+
+            let mut server_info = json!({ "name": "veyn-mcp", "version": env!("CARGO_PKG_VERSION") });
+            if let Some(ctx) = bootstrap_ctx {
+                server_info["context"] = json!(ctx);
+            }
+
             Ok(json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "veyn-mcp", "version": env!("CARGO_PKG_VERSION") }
+                "serverInfo": server_info
             }))
         }
         "ping" => Ok(json!({})),

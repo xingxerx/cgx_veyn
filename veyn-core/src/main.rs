@@ -4,6 +4,7 @@ mod baseline;
 mod compression;
 mod config;
 mod dispatcher;
+mod memory;
 mod presence;
 mod session;
 mod storage;
@@ -275,6 +276,26 @@ async fn main() -> Result<()> {
                 error!("MQTT bridge error: {}", e);
             }
         });
+    }
+
+    // Ambient memory writer.
+    if cfg.memory_enabled {
+        if let Some(ref db_arc) = state.db {
+            let db = db_arc.clone();
+            let config = state.config.clone();
+            let history = state.context_history.clone();
+            let daemon_session_id = state.session_id.clone();
+            tokio::spawn(async move {
+                memory::ambient_writer(db, config, history, daemon_session_id).await;
+            });
+            info!(
+                interval_secs = cfg.memory_ambient_interval_secs,
+                max_records   = cfg.memory_max_records,
+                "memory layer enabled — ambient writer scheduled"
+            );
+        } else {
+            warn!("memory layer enabled but no database — ambient writer disabled");
+        }
     }
 
     // Graceful shutdown signal.

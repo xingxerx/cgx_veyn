@@ -4,7 +4,8 @@
 /// - `veyn_schemas`: serialisation / deserialisation of all public types
 /// - `veyn_plugins`: manifest loading and sha256 utility
 use veyn_schemas::{
-    BaselineStats, IntentCode, Session, SessionBoundary, SessionBoundaryKind, VeynEvent,
+    BaselineStats, IntentCode, MemoryKind, MemoryRecord, Session, SessionBoundary,
+    SessionBoundaryKind, VeynEvent,
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -151,6 +152,65 @@ fn session_boundary_end_serialises() {
     };
     let json = serde_json::to_string(&b).unwrap();
     assert!(json.contains("end"));
+}
+
+// ── Memory schema round-trips ─────────────────────────────────────────────────
+
+#[test]
+fn memory_record_roundtrips_through_json() {
+    let record = MemoryRecord {
+        id: "test-id".to_string(),
+        timestamp_ms: 1_700_000_000_000,
+        session_id: "sess-1".to_string(),
+        kind: MemoryKind::Semantic,
+        topic: "project-review".to_string(),
+        summary: "Completed auth module refactor".to_string(),
+        intent_at_time: Some("cognitive_load".to_string()),
+        confidence_at_time: Some(0.85),
+        hrv_at_time: Some(42.5),
+        hr_at_time: Some(70.0),
+        context_snapshot: None,
+    };
+
+    let json = serde_json::to_string(&record).unwrap();
+    let decoded: MemoryRecord = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(decoded.id, record.id);
+    assert_eq!(decoded.kind, MemoryKind::Semantic);
+    assert_eq!(decoded.topic, "project-review");
+    assert_eq!(decoded.hrv_at_time, Some(42.5));
+}
+
+#[test]
+fn memory_kind_serialises_to_snake_case() {
+    assert_eq!(
+        serde_json::to_string(&MemoryKind::Ambient).unwrap(),
+        "\"ambient\""
+    );
+    assert_eq!(
+        serde_json::to_string(&MemoryKind::Semantic).unwrap(),
+        "\"semantic\""
+    );
+}
+
+#[test]
+fn memory_record_optional_fields_skip_null_in_json() {
+    let record = MemoryRecord {
+        id: "x".to_string(),
+        timestamp_ms: 0,
+        session_id: "s".to_string(),
+        kind: MemoryKind::Ambient,
+        topic: "ambient".to_string(),
+        summary: "quiet period".to_string(),
+        intent_at_time: None,
+        confidence_at_time: None,
+        hrv_at_time: None,
+        hr_at_time: None,
+        context_snapshot: None,
+    };
+    let json = serde_json::to_string(&record).unwrap();
+    assert!(!json.contains("hrv_at_time"), "None fields must be omitted: {json}");
+    assert!(!json.contains("hr_at_time"), "None fields must be omitted: {json}");
 }
 
 // ── Plugin manifest / SHA-256 ─────────────────────────────────────────────────
