@@ -552,10 +552,12 @@ mod tests {
         let db = Arc::new(Mutex::new(conn));
 
         // Build a minimal Config with a 1-second ambient interval.
-        let mut cfg = crate::config::Config::default();
-        cfg.memory_enabled = true;
-        cfg.memory_ambient_interval_secs = 1;
-        cfg.memory_max_records = 100;
+        let cfg = crate::config::Config {
+            memory_enabled: true,
+            memory_ambient_interval_secs: 1,
+            memory_max_records: 100,
+            ..Default::default()
+        };
         let config = Arc::new(cfg);
 
         // Pre-populate the context history with one snapshot that has active devices.
