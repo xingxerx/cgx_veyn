@@ -1121,7 +1121,11 @@ async fn memory_write(
     let (hrv, hr, intent, confidence) = snap
         .as_ref()
         .map(|s| {
-            let hrv = s.state_deltas.iter().find(|d| d.metric == "hrv").map(|d| d.value);
+            let hrv = s
+                .state_deltas
+                .iter()
+                .find(|d| d.metric == "hrv")
+                .map(|d| d.value);
             let hr = s
                 .state_deltas
                 .iter()
@@ -1131,10 +1135,9 @@ async fn memory_write(
         })
         .unwrap_or((None, None, None, None));
 
-    let ctx_blob = req.context_snapshot.or_else(|| {
-        snap.as_ref()
-            .and_then(|s| serde_json::to_value(s).ok())
-    });
+    let ctx_blob = req
+        .context_snapshot
+        .or_else(|| snap.as_ref().and_then(|s| serde_json::to_value(s).ok()));
 
     let record = MemoryRecord {
         id: Uuid::new_v4().to_string(),
@@ -1151,18 +1154,22 @@ async fn memory_write(
     };
 
     match &state.db {
-        Some(db) => match crate::memory::write_memory(&db.lock().unwrap(), &record) {
-            Ok(()) => (
-                StatusCode::CREATED,
-                Json(serde_json::to_value(&record).unwrap()),
-            )
-                .into_response(),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-                .into_response(),
-        },
+        Some(db) => {
+            let store =
+                crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
+            match store.write(record.clone()) {
+                Ok(()) => (
+                    StatusCode::CREATED,
+                    Json(serde_json::to_value(&record).unwrap()),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "error": "persistence not available" })),
@@ -1208,17 +1215,25 @@ async fn memory_query(
     };
 
     match &state.db {
-        Some(db) => match crate::memory::query_memory(&db.lock().unwrap(), &q) {
-            Ok(records) => {
-                let count = records.len();
-                (StatusCode::OK, Json(json!({ "records": records, "count": count }))).into_response()
+        Some(db) => {
+            let store =
+                crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
+            match store.query(&q) {
+                Ok(records) => {
+                    let count = records.len();
+                    (
+                        StatusCode::OK,
+                        Json(json!({ "records": records, "count": count })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
             }
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-                .into_response(),
-        },
+        }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "error": "persistence not available" })),

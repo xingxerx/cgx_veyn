@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{debug, error, info, warn};
-use chrono::Utc;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -415,7 +415,8 @@ async fn handle_method(client: &VeynClient, method: &str, params: Value) -> Resu
                 }
             };
 
-            let mut server_info = json!({ "name": "veyn-mcp", "version": env!("CARGO_PKG_VERSION") });
+            let mut server_info =
+                json!({ "name": "veyn-mcp", "version": env!("CARGO_PKG_VERSION") });
             if let Some(ctx) = bootstrap_ctx {
                 server_info["context"] = json!(ctx);
             }

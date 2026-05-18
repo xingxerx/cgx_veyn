@@ -209,8 +209,14 @@ fn memory_record_optional_fields_skip_null_in_json() {
         context_snapshot: None,
     };
     let json = serde_json::to_string(&record).unwrap();
-    assert!(!json.contains("hrv_at_time"), "None fields must be omitted: {json}");
-    assert!(!json.contains("hr_at_time"), "None fields must be omitted: {json}");
+    assert!(
+        !json.contains("hrv_at_time"),
+        "None fields must be omitted: {json}"
+    );
+    assert!(
+        !json.contains("hr_at_time"),
+        "None fields must be omitted: {json}"
+    );
 }
 
 // ── Plugin manifest / SHA-256 ─────────────────────────────────────────────────

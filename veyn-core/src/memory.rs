@@ -35,7 +35,11 @@ impl MemoryStore {
         if ambient_count > self.max_records {
             let excess = ambient_count - self.max_records;
             prune_oldest_ambient(&conn, excess)?;
-            info!(pruned = excess, remaining = self.max_records, "ambient memory pruned");
+            info!(
+                pruned = excess,
+                remaining = self.max_records,
+                "ambient memory pruned"
+            );
         }
         Ok(())
     }
@@ -46,6 +50,7 @@ impl MemoryStore {
     }
 
     /// Collapse existing memory records within a time window into a single summary string.
+    #[allow(dead_code)]
     pub fn summarize_window(&self, since_ms: i64, until_ms: i64) -> Result<String> {
         let q = MemoryQuery {
             since_ms: Some(since_ms),
@@ -222,6 +227,7 @@ pub fn summarize_snapshots(snapshots: &[ContextSnapshot]) -> String {
 }
 
 /// Collapse a slice of MemoryRecords into a human-readable summary string.
+#[allow(dead_code)]
 fn summarize_records(records: &[MemoryRecord], since_ms: i64, until_ms: i64) -> String {
     if records.is_empty() {
         return "no memory records in window".to_string();
@@ -287,12 +293,8 @@ pub async fn ambient_writer(
     loop {
         ticker.tick().await;
 
-        let snapshots: Vec<ContextSnapshot> = context_history
-            .lock()
-            .unwrap()
-            .iter()
-            .cloned()
-            .collect();
+        let snapshots: Vec<ContextSnapshot> =
+            context_history.lock().unwrap().iter().cloned().collect();
 
         // Skip idle windows with no active devices.
         if snapshots.is_empty() || !snapshots.iter().any(|s| !s.active_devices.is_empty()) {
@@ -542,7 +544,11 @@ mod tests {
         let r = &records[0];
         assert_eq!(r.kind, MemoryKind::Ambient);
         assert_eq!(r.topic, "ambient");
-        assert!(r.summary.contains("dominant_intent=neutral"), "got: {}", r.summary);
+        assert!(
+            r.summary.contains("dominant_intent=neutral"),
+            "got: {}",
+            r.summary
+        );
     }
 
     #[test]

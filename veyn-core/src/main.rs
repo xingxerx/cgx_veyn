@@ -290,7 +290,7 @@ async fn main() -> Result<()> {
             });
             info!(
                 interval_secs = cfg.memory_ambient_interval_secs,
-                max_records   = cfg.memory_max_records,
+                max_records = cfg.memory_max_records,
                 "memory layer enabled — ambient writer scheduled"
             );
         } else {
