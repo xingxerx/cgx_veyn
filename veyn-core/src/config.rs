@@ -60,6 +60,7 @@ struct TomlAdapters {
 struct TomlLogging {
     level: Option<String>,
     jsonl_path: Option<String>,
+    db_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -119,6 +120,8 @@ pub struct Config {
     pub debounce_ms: HashMap<String, u64>,
     pub epsilons: HashMap<String, f64>,
     pub log_level: String,
+    /// Path to SQLite database for session and baseline persistence.
+    pub db_path: String,
 }
 
 impl Default for Config {
@@ -151,6 +154,7 @@ impl Default for Config {
             debounce_ms: default_debounce_ms(),
             epsilons: default_epsilons(),
             log_level: "info".to_string(),
+            db_path: "veyn.db".to_string(),
         }
     }
 }
@@ -248,6 +252,9 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     }
     if let Some(v) = file.logging.jsonl_path {
         cfg.jsonl_path = v;
+    }
+    if let Some(v) = file.logging.db_path {
+        cfg.db_path = v;
     }
     if let Some(v) = file.logging.level {
         cfg.log_level = v;

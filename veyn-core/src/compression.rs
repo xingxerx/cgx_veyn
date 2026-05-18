@@ -24,7 +24,7 @@ pub struct RuleCondition {
 pub struct SemanticRule {
     pub name: String,
     pub intent: String,
-    /// Optional machine-readable code; defaults to Observing if absent.
+    /// Optional machine-readable code; defaults to Neutral if absent.
     #[serde(default)]
     pub intent_code: Option<IntentCode>,
     #[serde(default = "default_confidence")]
@@ -140,9 +140,25 @@ impl CompressionEngine {
         true
     }
 
-    /// Synthesize intent from the current metric state.
-    /// Returns `(intent_string, intent_code, confidence)`.
-    pub fn synthesize(&self, state: &HashMap<String, f64>) -> (String, IntentCode, f64) {
+    /// Synthesize intent from the current metric state and optional baseline z-scores.
+    ///
+    /// Z-score based Intero classification runs first when baseline data is available.
+    /// Rule-based classification follows as fallback.
+    ///
+    /// Returns `(intent_string, intent_code, confidence_f32)`.
+    pub fn synthesize(
+        &self,
+        state: &HashMap<String, f64>,
+        z_scores: &HashMap<String, f64>,
+    ) -> (String, IntentCode, f32) {
+        // Intero physiological classification from z-scores (requires baseline).
+        if !z_scores.is_empty() {
+            if let Some(result) = classify_intero(state, z_scores) {
+                return result;
+            }
+        }
+
+        // Rule-based classification.
         for rule in &self.rules {
             if rule.conditions.iter().all(|c| {
                 state.get(&c.metric).is_some_and(|&v| match c.op.as_str() {
@@ -152,11 +168,12 @@ impl CompressionEngine {
                     _ => false,
                 })
             }) {
-                let code = rule.intent_code.clone().unwrap_or(IntentCode::Observing);
-                return (rule.intent.clone(), code, rule.confidence);
+                let code = rule.intent_code.clone().unwrap_or(IntentCode::Neutral);
+                return (rule.intent.clone(), code, rule.confidence as f32);
             }
         }
-        ("observing".to_string(), IntentCode::Observing, 0.5)
+
+        ("neutral".to_string(), IntentCode::Neutral, 0.5)
     }
 
     /// Fraction of raw events that passed the filter (0.0–1.0).
@@ -167,6 +184,79 @@ impl CompressionEngine {
             self.passed_count as f64 / self.raw_count as f64
         }
     }
+}
+
+// ── Intero z-score classification ─────────────────────────────────────────────
+
+/// Classify intent from physiological z-scores relative to personal baseline.
+/// Returns None if no pattern is confidently matched.
+fn classify_intero(
+    _state: &HashMap<String, f64>,
+    z: &HashMap<String, f64>,
+) -> Option<(String, IntentCode, f32)> {
+    let hr_z = z.get("heart_rate").copied();
+    let hrv_z = z.get("hrv").copied();
+    let rr_z = z.get("respiratory_rate").copied();
+    let spo2_z = z.get("spo2").copied();
+
+    // StressResponse: elevated HR z-score AND suppressed HRV z-score.
+    if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
+        if hr > 1.5 && hrv < -1.0 {
+            let confidence = (((hr - 1.5) + hrv.abs()) / 6.0).clamp(0.55, 0.95) as f32;
+            return Some((
+                "stress_response".to_string(),
+                IntentCode::StressResponse,
+                confidence,
+            ));
+        }
+    }
+
+    // CognitiveLoad: mildly elevated HR, suppressed HRV, normal or elevated RR.
+    if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
+        if (0.5..1.5).contains(&hr) && hrv < -0.5 {
+            let rr_ok = rr_z.map(|r| r > -1.0).unwrap_or(true);
+            if rr_ok {
+                return Some((
+                    "cognitive_load".to_string(),
+                    IntentCode::CognitiveLoad,
+                    0.65,
+                ));
+            }
+        }
+    }
+
+    // Fatigue: below-baseline HR, suppressed HRV, SpO2 normal or suppressed.
+    if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
+        if hr < -0.5 && hrv < -0.5 {
+            let spo2_ok = spo2_z.map(|s| s > -1.0).unwrap_or(true);
+            if spo2_ok {
+                return Some(("fatigue".to_string(), IntentCode::Fatigue, 0.65));
+            }
+        }
+    }
+
+    // Recovery: HR and HRV trending toward baseline after stress.
+    if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
+        if (-0.5..0.5).contains(&hr) && hrv > 0.5 {
+            return Some(("recovery".to_string(), IntentCode::Recovery, 0.6));
+        }
+    }
+
+    // Approach: elevated HR, elevated HRV (engagement, positive arousal).
+    if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
+        if hr > 0.5 && hrv > 0.5 {
+            return Some(("approach".to_string(), IntentCode::Approach, 0.6));
+        }
+    }
+
+    // Avoidance: strong suppression across signals.
+    if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
+        if hr < -1.0 && hrv < -1.5 {
+            return Some(("avoidance".to_string(), IntentCode::Avoidance, 0.6));
+        }
+    }
+
+    None
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -227,13 +317,13 @@ mod tests {
     }
 
     #[test]
-    fn synthesize_no_rules_returns_observing() {
+    fn synthesize_no_rules_returns_neutral() {
         let eng = make_engine();
         let state = HashMap::new();
-        let (intent, code, conf) = eng.synthesize(&state);
-        assert_eq!(intent, "observing");
-        assert_eq!(code, IntentCode::Observing);
-        assert_eq!(conf, 0.5);
+        let (intent, code, conf) = eng.synthesize(&state, &HashMap::new());
+        assert_eq!(intent, "neutral");
+        assert_eq!(code, IntentCode::Neutral);
+        assert!((conf - 0.5).abs() < 0.01);
     }
 
     #[test]
@@ -245,8 +335,8 @@ mod tests {
         let content = r#"
 [[rules]]
 name = "high_hr"
-intent = "stressed"
-intent_code = "stressed"
+intent = "stress_response"
+intent_code = "stress_response"
 confidence = 0.9
 [[rules.conditions]]
 metric = "heart_rate"
@@ -264,9 +354,82 @@ threshold = 100.0
 
         let mut state = HashMap::new();
         state.insert("heart_rate".to_string(), 110.0);
-        let (intent, code, conf) = eng.synthesize(&state);
-        assert_eq!(intent, "stressed");
-        assert_eq!(code, IntentCode::Stressed);
+        let (intent, code, conf) = eng.synthesize(&state, &HashMap::new());
+        assert_eq!(intent, "stress_response");
+        assert_eq!(code, IntentCode::StressResponse);
         assert!((conf - 0.9).abs() < 0.01);
+    }
+
+    #[test]
+    fn classify_stress_response_from_z_scores() {
+        let eng = make_engine();
+        let state = HashMap::new();
+        let mut z = HashMap::new();
+        z.insert("heart_rate".to_string(), 2.0);
+        z.insert("hrv".to_string(), -1.5);
+        let (_, code, conf) = eng.synthesize(&state, &z);
+        assert_eq!(code, IntentCode::StressResponse);
+        assert!(conf > 0.5);
+    }
+
+    #[test]
+    fn classify_recovery_from_z_scores() {
+        let eng = make_engine();
+        let state = HashMap::new();
+        let mut z = HashMap::new();
+        z.insert("heart_rate".to_string(), 0.1);
+        z.insert("hrv".to_string(), 1.2);
+        let (_, code, _) = eng.synthesize(&state, &z);
+        assert_eq!(code, IntentCode::Recovery);
+    }
+
+    #[test]
+    fn classify_cognitive_load_from_z_scores() {
+        let eng = make_engine();
+        let state = HashMap::new();
+        let mut z = HashMap::new();
+        z.insert("heart_rate".to_string(), 1.0);
+        z.insert("hrv".to_string(), -0.8);
+        let (_, code, _) = eng.synthesize(&state, &z);
+        assert_eq!(code, IntentCode::CognitiveLoad);
+    }
+
+    #[test]
+    fn classify_fatigue_from_z_scores() {
+        let eng = make_engine();
+        let state = HashMap::new();
+        let mut z = HashMap::new();
+        z.insert("heart_rate".to_string(), -1.0);
+        z.insert("hrv".to_string(), -1.2);
+        let (_, code, _) = eng.synthesize(&state, &z);
+        assert_eq!(code, IntentCode::Fatigue);
+    }
+
+    #[test]
+    fn custom_serde_other_roundtrip() {
+        let code = IntentCode::Other("custom_state".to_string());
+        let json = serde_json::to_string(&code).unwrap();
+        assert_eq!(json, r#""custom_state""#);
+        let decoded: IntentCode = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, IntentCode::Other("custom_state".to_string()));
+    }
+
+    #[test]
+    fn known_variants_serde() {
+        let pairs = [
+            (IntentCode::Neutral, "neutral"),
+            (IntentCode::CognitiveLoad, "cognitive_load"),
+            (IntentCode::StressResponse, "stress_response"),
+            (IntentCode::Approach, "approach"),
+            (IntentCode::Avoidance, "avoidance"),
+            (IntentCode::Fatigue, "fatigue"),
+            (IntentCode::Recovery, "recovery"),
+        ];
+        for (variant, expected) in pairs {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, format!("\"{expected}\""));
+            let decoded: IntentCode = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, variant);
+        }
     }
 }
