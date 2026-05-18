@@ -14,6 +14,7 @@ use veyn_schemas::VeynEvent;
 
 use crate::VeynAdapter;
 
+#[derive(Default)]
 pub struct HidrawAdapter;
 
 impl HidrawAdapter {
@@ -101,10 +102,7 @@ fn read_hidraw_device(path: String, tx: mpsc::Sender<VeynEvent>) {
             .join(" ");
 
         let event = VeynEvent::new(&device_id, "hidraw", "hid_report", n as f64, "bytes")
-            .with_meta(
-                "report_hex",
-                serde_json::Value::String(snippet),
-            );
+            .with_meta("report_hex", serde_json::Value::String(snippet));
 
         if tx.blocking_send(event).is_err() {
             return;

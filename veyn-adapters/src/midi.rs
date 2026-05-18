@@ -13,6 +13,7 @@ use veyn_schemas::VeynEvent;
 
 use crate::VeynAdapter;
 
+#[derive(Default)]
 pub struct MidiAdapter;
 
 impl MidiAdapter {
@@ -60,12 +61,18 @@ fn run_midi_loop(tx: mpsc::Sender<VeynEvent>) -> Result<()> {
 
     let tx_inner = tx.clone();
     // Keep _conn alive for the duration.
-    let _conn: MidiInputConnection<()> =
-        midi_in.connect(port, "veyn-listener", move |_ts, msg, _| {
-            if let Some(ev) = parse_midi_message(msg) {
-                let _ = tx_inner.blocking_send(ev);
-            }
-        }, ()).map_err(|e| anyhow::anyhow!("MIDI connect error: {}", e.kind()))?;
+    let _conn: MidiInputConnection<()> = midi_in
+        .connect(
+            port,
+            "veyn-listener",
+            move |_ts, msg, _| {
+                if let Some(ev) = parse_midi_message(msg) {
+                    let _ = tx_inner.blocking_send(ev);
+                }
+            },
+            (),
+        )
+        .map_err(|e| anyhow::anyhow!("MIDI connect error: {}", e.kind()))?;
 
     // Hold the connection open until the channel closes.
     loop {
@@ -120,7 +127,13 @@ fn parse_midi_message(msg: &[u8]) -> Option<VeynEvent> {
         }
         0xF8 => {
             // MIDI Timing Clock
-            Some(VeynEvent::new("midi:clock", "midi", "midi_clock", 1.0, "pulse"))
+            Some(VeynEvent::new(
+                "midi:clock",
+                "midi",
+                "midi_clock",
+                1.0,
+                "pulse",
+            ))
         }
         _ => None,
     }

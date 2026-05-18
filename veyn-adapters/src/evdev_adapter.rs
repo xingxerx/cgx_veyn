@@ -13,6 +13,7 @@ use veyn_schemas::VeynEvent;
 
 use crate::VeynAdapter;
 
+#[derive(Default)]
 pub struct EvdevAdapter;
 
 impl EvdevAdapter {
@@ -81,10 +82,7 @@ fn read_evdev_device(path: String, tx: mpsc::Sender<VeynEvent>) {
         }
     };
 
-    let device_name = device
-        .name()
-        .unwrap_or("unknown")
-        .to_string();
+    let device_name = device.name().unwrap_or("unknown").to_string();
     let device_id = format!("evdev:{}", path.replace("/dev/input/", ""));
 
     info!(path = %path, name = %device_name, "evdev device opened");
@@ -107,10 +105,7 @@ fn read_evdev_device(path: String, tx: mpsc::Sender<VeynEvent>) {
                     }
                     Some(
                         VeynEvent::new(&device_id, "evdev", "key_event", value, "")
-                            .with_meta(
-                                "key",
-                                serde_json::Value::String(format!("{key:?}")),
-                            )
+                            .with_meta("key", serde_json::Value::String(format!("{key:?}")))
                             .with_meta(
                                 "device_name",
                                 serde_json::Value::String(device_name.clone()),
