@@ -123,6 +123,46 @@ export interface VeynDevice {
   last_seen: number;
 }
 
+// ── ContextTier ───────────────────────────────────────────────────────────────
+
+/**
+ * Controls which layer of data a token (or the daemon default) exposes.
+ *
+ * - `"raw"`      — full VeynEvent stream, unfiltered
+ * - `"filtered"` — compression-filtered events only (delta + debounce applied)
+ * - `"semantic"` — only ContextSnapshot; raw events are not exposed
+ *
+ * Configure daemon default in veyn.toml: `context_tier = "semantic"`
+ * Set token ceiling via scope `"tier:semantic"` in tokens.json.
+ */
+export type ContextTier = "raw" | "filtered" | "semantic";
+
+// ── WebSocket session frame ───────────────────────────────────────────────────
+
+/**
+ * Wraps a VeynEvent when a recording session is active.
+ * Emitted on the WebSocket stream (Raw/Filtered tier) instead of a bare event.
+ */
+export interface SessionFrame {
+  session_id: string;
+  channel: string;
+  event: VeynEvent;
+}
+
+// ── Baseline history ──────────────────────────────────────────────────────────
+
+export interface BaselineDailyPoint {
+  ts: number;
+  mean: number;
+}
+
+export interface BaselineHistoryResponse {
+  device_id: string;
+  metric: string;
+  days: number;
+  history: BaselineDailyPoint[];
+}
+
 // ── Client filter/response types ──────────────────────────────────────────────
 
 export interface HealthResponse {

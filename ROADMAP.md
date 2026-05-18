@@ -98,8 +98,8 @@
 - [x] `veyn plugin install <path>` CLI subcommand
 - [x] Linux `evdev` HID adapter (`/dev/input/event*`)
 - [x] Linux `hidraw` adapter (raw USB HID)
-- [ ] macOS `IOKit` / `IOHIDManager` adapter
-- [ ] Windows `WinUSB` / `RawInput` adapter
+- [x] macOS `IOKit` / `IOHIDManager` adapter (`veyn-adapters/src/iokit.rs`, `cfg(target_os = "macos")`)
+- [x] Windows `WinUSB` / `RawInput` adapter (`veyn-adapters/src/winusb.rs`, `cfg(target_os = "windows")`)
 - [x] MIDI adapter (`midir`) — CC events, note on/off, clock
 - [x] Serial/UART adapter (`serialport`) — configurable baud, parity, stop bits
 - [x] Filesystem watcher adapter (`notify`)
@@ -107,7 +107,7 @@
 - [x] Scope-limited tokens — read-only or device-class-scoped access
 - [x] Rate limiting on REST endpoints — token bucket, 100 req/s per client IP
 - [x] OpenAPI 3.0 spec (`openapi.yaml`) published at `GET /openapi.yaml`
-- [ ] WebSocket subscribe filtering — client sends filter object on connect
+- [x] WebSocket subscribe filtering — client sends filter object on connect
 
 -----
 
@@ -124,7 +124,7 @@ decisions they are weighing.
 - [x] `SessionBoundary` control event — broadcast `Start` / `End` envelopes on the event bus
 - [x] `SessionManager` in `veyn-core` — opens/closes sessions, wired into `AppState`
 - [x] REST: `POST /v1/session/start`, `POST /v1/session/stop`, `GET /v1/session/{id}`
-- [ ] WebSocket session framing — `session_frame` envelope during active sessions
+- [x] WebSocket session framing — `session_frame` envelope during active sessions
 - [x] MCP tools: `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`
 
 ### 8.2 — Named Sessions with Metadata and Persistence ✅
@@ -134,7 +134,7 @@ decisions they are weighing.
 - [x] `GET /v1/session/{id}/replay` — full-resolution event timeline (bypasses compression)
 - [x] `PATCH /v1/session/{id}` — update label / annotation post-hoc
 - [x] `GET /v1/sessions` — paginated list with summary stats
-- [ ] `GET /v1/session/{id}/export?format=csv`
+- [x] `GET /v1/session/{id}/export?format=csv`
 
 ### 8.3 — Personal Baseline Tracking ✅
 
@@ -143,7 +143,7 @@ decisions they are weighing.
 - [x] `baseline_samples` SQLite table — persists samples across daemon restarts
 - [x] `GET /v1/baseline/{device_id}/{metric}` — current stats
 - [x] `baseline_delta` map on `ContextSnapshot` — z-score per metric, only when baseline sufficient
-- [ ] `GET /v1/baseline/{device_id}/{metric}/history?days=30`
+- [x] `GET /v1/baseline/{device_id}/{metric}/history?days=30`
 
 ### 8.4 — `intent_code` Structured Field ✅
 
@@ -163,20 +163,20 @@ complete before Phase 9 begins.
 
 -----
 
-## Phase 10 — SDK & Ecosystem 🔄
+## Phase 10 — SDK & Ecosystem ✅ (Go SDK pending)
 
 - [x] TypeScript/Node.js SDK (`sdk/ts/`) — typed client, HTTP + SSE + WebSocket, zero runtime deps
 - [x] Python SDK (`sdk/py/`) — async `aiohttp`/`websockets` client, dataclass types
 - [x] SDK usage examples: LLM agent integration, session recording, context reader
 - [ ] Go SDK
-- [ ] `docker-compose.yml` — local dev stack (daemon + mock + example consumer)
+- [x] `docker-compose.yml` — local dev stack (daemon + mock + example consumer)
 - [x] Integration test suite — 34 tests covering schemas, serialisation, plugin utilities
 - [x] `veyn doctor` CLI subcommand
-- [ ] Minimal web UI at `GET /ui`
-- [ ] Agent Handshake Protocol design + docs
-- [ ] `GET /v1/context/subscribe` with declarative filter DSL
-- [ ] `context_tier` config: `raw` | `filtered` | `semantic`
-- [ ] Integration guides: Claude via `veyn-mcp`, Ollama, OpenAI function calling
+- [x] Minimal web UI at `GET /` — live context feed, device list, log tail (dashboard.html)
+- [x] Agent Handshake Protocol — Bearer token + tier scope + declarative SSE filter DSL
+- [x] `GET /v1/context/subscribe` with declarative filter DSL (`?intents=`, `?min_confidence=`, `?source_class=`)
+- [x] `context_tier` config: `raw` | `filtered` | `semantic` — token scope `tier:<value>`, daemon default via `veyn.toml` and `VEYN_CONTEXT_TIER`
+- [x] Integration guides: Claude via `veyn-mcp`, Ollama, OpenAI function calling (`docs/integrations/`)
 - [x] Prometheus metrics at `GET /metrics`
 
 -----
@@ -195,4 +195,4 @@ complete before Phase 9 begins.
 |7    |Platform hardening — HID adapters, WASM proxy, token scopes         |✅     |
 |8    |Intero infrastructure — sessions, baselines, `intent_code`          |✅     |
 |9    |Intero app — physiological decision-support desktop application     |🔜     |
-|10   |SDK + ecosystem — language SDKs, DX tooling, agent integration      |🔄     |
+|10   |SDK + ecosystem — language SDKs, DX tooling, agent integration      |✅     |

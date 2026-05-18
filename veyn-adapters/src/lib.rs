@@ -16,6 +16,10 @@ pub mod serial_adapter;
 pub mod evdev_adapter;
 #[cfg(target_os = "linux")]
 pub mod hidraw;
+#[cfg(target_os = "macos")]
+pub mod iokit;
+#[cfg(target_os = "windows")]
+pub mod winusb;
 
 /// Every data source implements this trait.
 #[async_trait]

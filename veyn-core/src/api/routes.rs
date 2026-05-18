@@ -23,6 +23,7 @@ use veyn_schemas::{ContextSnapshot, IntentCode, Session, StateDelta, VeynEvent, 
 
 use super::state::AppState;
 use crate::auth::TokenClaim;
+use crate::config::ContextTier;
 
 const DASHBOARD: &str = include_str!("dashboard.html");
 
@@ -63,8 +64,13 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/session/:id", get(session_get))
         .route("/v1/session/:id", patch(session_patch))
         .route("/v1/session/:id/replay", get(session_replay))
+        .route("/v1/session/:id/export", get(session_export))
         // Baseline routes (8.3)
-        .route("/v1/baseline/:device_id/:metric", get(baseline_get));
+        .route("/v1/baseline/:device_id/:metric", get(baseline_get))
+        .route(
+            "/v1/baseline/:device_id/:metric/history",
+            get(baseline_history),
+        );
 
     legacy.merge(v1).with_state(state)
 }
@@ -313,8 +319,21 @@ fn intent_code_str(code: &IntentCode) -> &str {
 
 // ── GET /stream  (WebSocket) ──────────────────────────────────────────────────
 
-async fn ws_stream(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+async fn ws_stream(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    claim: Option<axum::Extension<TokenClaim>>,
+) -> impl IntoResponse {
+    let tier = effective_tier(&state, claim.as_ref().map(|c| &c.0));
+    ws.on_upgrade(move |socket| handle_socket(socket, state, tier))
+}
+
+/// Resolve the effective tier: token ceiling takes precedence; falls back to
+/// the daemon-level default from config.
+fn effective_tier(state: &AppState, claim: Option<&TokenClaim>) -> ContextTier {
+    claim
+        .and_then(|c| c.tier_ceiling.clone())
+        .unwrap_or_else(|| state.config.context_tier.clone())
 }
 
 /// Client-to-server message for runtime WebSocket subscription filtering.
@@ -349,28 +368,39 @@ impl WsEventFilter {
     }
 }
 
-async fn handle_socket(mut socket: WebSocket, state: AppState) {
+async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier) {
     let mut rx = state.broadcast_tx.subscribe();
+    let mut cx_rx = state.context_broadcast_tx.subscribe();
     let mut filter = WsEventFilter::default();
 
-    // Replay ring buffer to newly connected client.
-    let replay: Vec<VeynEvent> = state
-        .recent_events
-        .lock()
-        .unwrap()
-        .iter()
-        .cloned()
-        .collect();
-
-    for event in &replay {
-        if !filter.accepts(event) {
-            continue;
+    // For Semantic tier, replay the latest context snapshot instead of raw events.
+    if tier == ContextTier::Semantic {
+        let maybe_snap = state.latest_context.lock().unwrap().clone();
+        if let Some(snap) = maybe_snap {
+            if let Ok(json) = serde_json::to_string(&snap) {
+                let _ = socket.send(Message::Text(json)).await;
+            }
         }
-        let Ok(json) = serde_json::to_string(event) else {
-            continue;
-        };
-        if socket.send(Message::Text(json)).await.is_err() {
-            return;
+    } else {
+        // Replay ring buffer to newly connected client (Raw / Filtered tiers).
+        let replay: Vec<VeynEvent> = state
+            .recent_events
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect();
+
+        for event in &replay {
+            if !filter.accepts(event) {
+                continue;
+            }
+            let Ok(json) = serde_json::to_string(event) else {
+                continue;
+            };
+            if socket.send(Message::Text(json)).await.is_err() {
+                return;
+            }
         }
     }
 
@@ -379,13 +409,48 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
 
     loop {
         tokio::select! {
-            result = rx.recv() => {
+            // ── Raw / Filtered tier: stream VeynEvents (with optional session frame) ──
+            result = rx.recv(), if tier != ContextTier::Semantic => {
                 match result {
                     Ok(event) => {
                         if !filter.accepts(&event) {
                             continue;
                         }
-                        let json = match serde_json::to_string(&event) {
+                        // Session framing: wrap in envelope when a session is active.
+                        let active_session = {
+                            let sm = state.session_manager.lock().unwrap();
+                            sm.current_id().map(|a| (*a).clone())
+                        };
+
+                        let json = if let Some(session_id) = active_session {
+                            match serde_json::to_string(&json!({
+                                "session_id": session_id,
+                                "channel":    event.device_id,
+                                "event":      event,
+                            })) {
+                                Ok(j) => j,
+                                Err(_) => continue,
+                            }
+                        } else {
+                            match serde_json::to_string(&event) {
+                                Ok(j) => j,
+                                Err(_) => continue,
+                            }
+                        };
+
+                        if socket.send(Message::Text(json)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(n)) => warn!("WebSocket subscriber lagged {} events", n),
+                    Err(RecvError::Closed) => break,
+                }
+            }
+            // ── Semantic tier: stream ContextSnapshots ────────────────────────────────
+            result = cx_rx.recv(), if tier == ContextTier::Semantic => {
+                match result {
+                    Ok(snapshot) => {
+                        let json = match serde_json::to_string(&snapshot) {
                             Ok(j) => j,
                             Err(_) => continue,
                         };
@@ -393,7 +458,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             break;
                         }
                     }
-                    Err(RecvError::Lagged(n)) => warn!("WebSocket subscriber lagged {} events", n),
+                    Err(RecvError::Lagged(n)) => warn!("WS semantic subscriber lagged {} snapshots", n),
                     Err(RecvError::Closed) => break,
                 }
             }
@@ -685,6 +750,119 @@ async fn baseline_get(
                 "metric": metric,
                 "hint": "at least 7 days of data required"
             })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/session/:id/export?format=csv ────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ExportParams {
+    #[serde(default = "default_format")]
+    format: String,
+}
+
+fn default_format() -> String {
+    "csv".to_string()
+}
+
+async fn session_export(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<ExportParams>,
+) -> impl IntoResponse {
+    if params.format != "csv" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "only format=csv is supported" })),
+        )
+            .into_response();
+    }
+
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::export_session_csv(&conn, &id) {
+                Ok(csv) => (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+                        (
+                            header::CONTENT_DISPOSITION,
+                            &format!("attachment; filename=\"session-{id}.csv\""),
+                        ),
+                    ],
+                    csv,
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/baseline/:device_id/:metric/history?days=30 ───────────────────────
+
+#[derive(Deserialize)]
+struct BaselineHistoryParams {
+    #[serde(default = "default_days")]
+    days: u32,
+}
+
+fn default_days() -> u32 {
+    30
+}
+
+async fn baseline_history(
+    State(state): State<AppState>,
+    Path((device_id, metric)): Path<(String, String)>,
+    Query(params): Query<BaselineHistoryParams>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::load_baseline_daily_history(
+                &conn,
+                &device_id,
+                &metric,
+                params.days,
+            ) {
+                Ok(history) => {
+                    let points: Vec<serde_json::Value> = history
+                        .into_iter()
+                        .map(|(ts, mean)| json!({ "ts": ts, "mean": mean }))
+                        .collect();
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "device_id": device_id,
+                            "metric": metric,
+                            "days": params.days,
+                            "history": points,
+                        })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "persistence not available" })),
         )
             .into_response(),
     }
