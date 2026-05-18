@@ -199,7 +199,11 @@ async fn main() -> Result<()> {
 
     // EEG/OSC adapter.
     if cfg.eeg_enabled {
-        spawn_adapter(EegAdapter::new(cfg.osc_port), event_tx.clone(), state.clone());
+        spawn_adapter(
+            EegAdapter::new(cfg.osc_port),
+            event_tx.clone(),
+            state.clone(),
+        );
     }
 
     // Platform-specific adapters.
@@ -223,7 +227,11 @@ async fn main() -> Result<()> {
 
     // MIDI adapter.
     if cfg.midi_enabled {
-        spawn_adapter(veyn_adapters::midi::MidiAdapter::new(), event_tx.clone(), state.clone());
+        spawn_adapter(
+            veyn_adapters::midi::MidiAdapter::new(),
+            event_tx.clone(),
+            state.clone(),
+        );
     }
 
     // Serial adapter.
@@ -313,7 +321,10 @@ fn run_plugin_cmd(action: PluginAction, cfg: &config::Config) -> Result<()> {
             }
 
             let sha = veyn_plugins::sha256_file(&manifest.wasm_path)?;
-            println!("plugin: {}  v{}", manifest.plugin.name, manifest.plugin.version);
+            println!(
+                "plugin: {}  v{}",
+                manifest.plugin.name, manifest.plugin.version
+            );
             println!("wasm:   {:?}", manifest.wasm_path);
             println!("sha256: {}", sha);
 
@@ -330,16 +341,17 @@ fn run_plugin_cmd(action: PluginAction, cfg: &config::Config) -> Result<()> {
                 println!("signature: none declared (unsigned)");
             }
 
-            let dest_dir = plugins_dir
-                .as_deref()
-                .unwrap_or(&cfg.plugins_dir);
+            let dest_dir = plugins_dir.as_deref().unwrap_or(&cfg.plugins_dir);
             std::fs::create_dir_all(dest_dir)?;
             let plugin_dir = Path::new(dest_dir).join(&manifest.plugin.name);
             std::fs::create_dir_all(&plugin_dir)?;
 
             let dest_toml = plugin_dir.join("plugin.toml");
             let dest_wasm = plugin_dir.join(
-                manifest.wasm_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("plugin.wasm"))
+                manifest
+                    .wasm_path
+                    .file_name()
+                    .unwrap_or_else(|| std::ffi::OsStr::new("plugin.wasm")),
             );
 
             std::fs::copy(&manifest_path, &dest_toml)?;
@@ -396,12 +408,10 @@ fn run_doctor(cfg: &config::Config) -> Result<()> {
     );
 
     // Rust version (informational)
-    let rustc = std::process::Command::new("rustc").arg("--version").output();
-    check!(
-        "rustc available",
-        rustc.is_ok(),
-        "rustc not found in PATH"
-    );
+    let rustc = std::process::Command::new("rustc")
+        .arg("--version")
+        .output();
+    check!("rustc available", rustc.is_ok(), "rustc not found in PATH");
 
     // BLE availability (Linux: check if bluetoothd is running)
     #[cfg(target_os = "linux")]
@@ -410,7 +420,11 @@ fn run_doctor(cfg: &config::Config) -> Result<()> {
             .arg("show")
             .output();
         let bt_ok = bt.map(|o| o.status.success()).unwrap_or(false);
-        check!("bluetooth available", bt_ok, "bluetoothctl show failed — BLE may not work");
+        check!(
+            "bluetooth available",
+            bt_ok,
+            "bluetoothctl show failed — BLE may not work"
+        );
     }
 
     // evdev access (Linux)

@@ -78,8 +78,8 @@ fn veyn_event_roundtrips() {
 
 #[test]
 fn veyn_event_with_meta_serialises() {
-    let ev = mock_event("dev1", "heart_rate", 72.0, "bpm")
-        .with_meta("quality", serde_json::json!(0.95));
+    let ev =
+        mock_event("dev1", "heart_rate", 72.0, "bpm").with_meta("quality", serde_json::json!(0.95));
     let json = serde_json::to_string(&ev).unwrap();
     assert!(json.contains("quality"));
     assert!(json.contains("0.95"));
