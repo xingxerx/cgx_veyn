@@ -332,3 +332,51 @@ impl VeynDevice {
         }
     }
 }
+
+// ── MemoryKind ────────────────────────────────────────────────────────────────
+
+/// Classification of a memory record's origin.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryKind {
+    /// Auto-generated summary of a time window produced by the ambient writer task.
+    Ambient,
+    /// Explicitly written by the AI agent at the end of a meaningful session.
+    Semantic,
+}
+
+// ── MemoryRecord ──────────────────────────────────────────────────────────────
+
+/// A persistent biometric memory entry linking a session topic to physiological state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRecord {
+    pub id: String,
+    pub timestamp_ms: i64,
+    pub session_id: String,
+    pub kind: MemoryKind,
+    pub topic: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_at_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_at_time: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hrv_at_time: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hr_at_time: Option<f64>,
+    /// Full ContextSnapshot JSON blob at the time of the write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_snapshot: Option<serde_json::Value>,
+}
+
+// ── MemoryQuery ───────────────────────────────────────────────────────────────
+
+/// Filter for querying memory records.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MemoryQuery {
+    pub topic: Option<String>,
+    pub since_ms: Option<i64>,
+    pub until_ms: Option<i64>,
+    pub kind: Option<MemoryKind>,
+    pub limit: Option<usize>,
+}

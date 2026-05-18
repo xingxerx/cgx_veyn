@@ -258,3 +258,25 @@ can pattern-match against reliably — not a string to parse.
 - [x] ✅ Write deterministic unit tests for each `IntentCode` variant — inject synthetic `BaselineStats` and metric delta inputs; assert expected `intent_code` and `intent_confidence` range without live hardware
 - [x] ✅ Update `veyn-mcp` tool descriptions to document `intent_code` field in `veyn_get_context` response schema
 - [ ] 🟢 Optional secondary classification pass — if `intent_confidence < 0.6`, invoke a local SLM (`llama.cpp` via FFI or subprocess) with the current metric snapshot as a structured prompt; use the SLM output to override `intent_code` and raise `intent_confidence`; gate behind `compression.use_slm = true` config flag
+
+-----
+
+## 11. 🔴 Biometric Memory Layer
+
+Cross-session physiological memory that lets AI sessions start pre-loaded with biometric history.
+
+- [x] ✅ `MemoryKind` enum (`Ambient` | `Semantic`) in `veyn-schemas`
+- [x] ✅ `MemoryRecord` struct: `id`, `timestamp_ms`, `session_id`, `kind`, `topic`, `summary`, `intent_at_time`, `confidence_at_time`, `hrv_at_time`, `hr_at_time`, `context_snapshot`
+- [x] ✅ `MemoryQuery` struct: `topic`, `since_ms`, `until_ms`, `kind`, `limit`
+- [x] ✅ SQLite `veyn_memory` table with indexes on `timestamp_ms`, `topic`, `kind`
+- [x] ✅ `memory.rs` in `veyn-core`: `MemoryStore`, `write`, `query`, `summarize_window`, `summarize_snapshots`
+- [x] ✅ Ambient writer background task — fires every 15 min, reads context ring buffer, writes one `Ambient` record; skips idle windows; prunes oldest ambient when `max_records` exceeded
+- [x] ✅ `POST /v1/memory` — writes a Semantic record, auto-attaches current physiological state
+- [x] ✅ `GET /v1/memory?topic=&since=&until=&kind=&limit=` — filtered retrieval
+- [x] ✅ `[memory]` config section: `enabled`, `ambient_interval_secs` (900 s), `max_records` (10 000)
+- [x] ✅ MCP tool `veyn_write_memory` (topic, summary) — semantic memory write via daemon
+- [x] ✅ MCP tool `veyn_recall_memory` (topic?, since?, kind?) — human-readable `since` ("7d", "24h", "30d") parsed to ms
+- [x] ✅ MCP session bootstrap: auto-recalls last 24 h of memory on every `initialize`, embeds in `serverInfo.context`
+- [x] ✅ Unit + integration tests: round-trips, kind filtering, ambient pruning, async writer firing
+- [ ] 🟢 Optional: expose `GET /v1/memory/{id}` single-record endpoint
+- [ ] 🟢 Optional: `DELETE /v1/memory/{id}` for agent-driven forgetting of a specific record

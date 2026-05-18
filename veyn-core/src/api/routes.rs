@@ -11,6 +11,7 @@ use axum::{
     routing::{get, patch, post},
     Router,
 };
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
@@ -19,7 +20,11 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{interval, Duration};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tracing::warn;
-use veyn_schemas::{ContextSnapshot, IntentCode, Session, StateDelta, VeynEvent, VeynNotification};
+use uuid::Uuid;
+use veyn_schemas::{
+    ContextSnapshot, IntentCode, MemoryKind, MemoryQuery, MemoryRecord, Session, StateDelta,
+    VeynEvent, VeynNotification,
+};
 
 use super::state::AppState;
 use crate::auth::TokenClaim;
@@ -71,7 +76,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/baseline/:device_id/:metric/history",
             get(baseline_history),
         )
-        .route("/v1/temporal/patterns", get(temporal_patterns));
+        .route("/v1/temporal/patterns", get(temporal_patterns))
+        // Memory layer (Phase 9)
+        .route("/v1/memory", post(memory_write))
+        .route("/v1/memory", get(memory_query));
 
     legacy.merge(v1).with_state(state)
 }
@@ -1086,4 +1094,150 @@ async fn openapi_spec() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "application/yaml")],
         SPEC,
     )
+}
+
+// ── POST /v1/memory ───────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MemoryWriteRequest {
+    topic: String,
+    summary: String,
+    context_snapshot: Option<serde_json::Value>,
+}
+
+async fn memory_write(
+    State(state): State<AppState>,
+    Json(req): Json<MemoryWriteRequest>,
+) -> impl IntoResponse {
+    if !state.config.memory_enabled {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "memory layer disabled" })),
+        )
+            .into_response();
+    }
+
+    let snap = state.latest_context.lock().unwrap().clone();
+    let (hrv, hr, intent, confidence) = snap
+        .as_ref()
+        .map(|s| {
+            let hrv = s
+                .state_deltas
+                .iter()
+                .find(|d| d.metric == "hrv")
+                .map(|d| d.value);
+            let hr = s
+                .state_deltas
+                .iter()
+                .find(|d| d.metric == "heart_rate")
+                .map(|d| d.value);
+            (hrv, hr, Some(s.intent.clone()), Some(s.confidence))
+        })
+        .unwrap_or((None, None, None, None));
+
+    let ctx_blob = req
+        .context_snapshot
+        .or_else(|| snap.as_ref().and_then(|s| serde_json::to_value(s).ok()));
+
+    let record = MemoryRecord {
+        id: Uuid::new_v4().to_string(),
+        timestamp_ms: Utc::now().timestamp_millis(),
+        session_id: (*state.session_id).clone(),
+        kind: MemoryKind::Semantic,
+        topic: req.topic,
+        summary: req.summary,
+        intent_at_time: intent,
+        confidence_at_time: confidence,
+        hrv_at_time: hrv,
+        hr_at_time: hr,
+        context_snapshot: ctx_blob,
+    };
+
+    match &state.db {
+        Some(db) => {
+            let store =
+                crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
+            match store.write(record.clone()) {
+                Ok(()) => (
+                    StatusCode::CREATED,
+                    Json(serde_json::to_value(&record).unwrap()),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/memory ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MemoryQueryParams {
+    topic: Option<String>,
+    since: Option<i64>,
+    until: Option<i64>,
+    kind: Option<String>,
+    #[serde(default = "default_memory_limit")]
+    limit: usize,
+}
+
+fn default_memory_limit() -> usize {
+    20
+}
+
+async fn memory_query(
+    State(state): State<AppState>,
+    Query(params): Query<MemoryQueryParams>,
+) -> impl IntoResponse {
+    let kind = params.kind.as_deref().map(|k| {
+        if k == "ambient" {
+            MemoryKind::Ambient
+        } else {
+            MemoryKind::Semantic
+        }
+    });
+
+    let q = MemoryQuery {
+        topic: params.topic,
+        since_ms: params.since,
+        until_ms: params.until,
+        kind,
+        limit: Some(params.limit),
+    };
+
+    match &state.db {
+        Some(db) => {
+            let store =
+                crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
+            match store.query(&q) {
+                Ok(records) => {
+                    let count = records.len();
+                    (
+                        StatusCode::OK,
+                        Json(json!({ "records": records, "count": count })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
 }

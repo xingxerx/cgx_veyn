@@ -155,11 +155,74 @@ decisions they are weighing.
 
 -----
 
-## Phase 9 — Intero App 🔜
+## Phase 9 — Biometric Memory Layer ✅
 
-The Intero desktop application built on the Phase 8 VEYN infrastructure.
-Scope defined separately. VEYN daemon is a hard dependency — Phase 8 must be
-complete before Phase 9 begins.
+Cross-session physiological memory that lets every AI session start with awareness
+of recent biometric history without querying the agent first.
+
+### 9.1 — Schema & Storage ✅
+
+- [x] `MemoryKind` enum in `veyn-schemas`: `Ambient` | `Semantic`
+- [x] `MemoryRecord` struct: `id`, `timestamp_ms`, `session_id`, `kind`, `topic`, `summary`,
+  `intent_at_time`, `confidence_at_time`, `hrv_at_time`, `hr_at_time`, `context_snapshot`
+- [x] `MemoryQuery` struct: `topic`, `since_ms`, `until_ms`, `kind`, `limit`
+- [x] SQLite migration: `veyn_memory` table with indexes on `timestamp_ms`, `topic`, `kind`
+
+### 9.2 — Memory Store Module ✅
+
+- [x] `memory.rs` in `veyn-core` — `MemoryStore` wrapping the shared SQLite connection
+- [x] `fn write(record: MemoryRecord) -> Result<()>` — persists record, prunes ambient overflow
+- [x] `fn query(q: &MemoryQuery) -> Result<Vec<MemoryRecord>>` — filtered retrieval with `NULL`-safe SQL
+- [x] `fn summarize_window(since_ms, until_ms) -> Result<String>` — collapses memory records in a window
+- [x] `fn summarize_snapshots(snapshots: &[ContextSnapshot]) -> String` — statistical pass for ambient writer
+
+### 9.3 — Ambient Writer Task ✅
+
+- [x] Background tokio task (`memory::ambient_writer`) spawned from `main.rs`
+- [x] Fires on configurable interval (default 15 min via `memory.ambient_interval_secs`)
+- [x] On each tick: reads context ring buffer, computes avg HRV, avg HR, dominant intent, duration
+- [x] Writes one `Ambient` MemoryRecord; skips idle windows (no active devices)
+- [x] Oldest ambient records pruned when `max_records` exceeded; semantic records never pruned
+
+### 9.4 — REST Endpoints ✅
+
+- [x] `POST /v1/memory` — body: `{ topic, summary, context_snapshot? }` — writes a Semantic record,
+  auto-attaches current physiological state from `latest_context`
+- [x] `GET /v1/memory?topic=&since=&until=&kind=&limit=` — returns `Vec<MemoryRecord>` matching query
+- [x] Both endpoints wired into `routes.rs` and protected by existing auth middleware
+
+### 9.5 — Config ✅
+
+- [x] `[memory]` section in `veyn.toml` and `Config` struct:
+  `enabled` (default true), `ambient_interval_secs` (default 900), `max_records` (default 10 000)
+- [x] `veyn.toml.example` updated with annotated `[memory]` section
+
+### 9.6 — MCP Tools ✅
+
+- [x] `veyn_write_memory` — args: `topic`, `summary` — POSTs to `/v1/memory`; daemon attaches biometrics
+- [x] `veyn_recall_memory` — args: `topic?`, `since?` (human: "7d"/"24h"), `kind?` — GETs `/v1/memory`
+- [x] Human-readable `since` strings parsed to Unix ms before forwarding
+- [x] Both tools registered in `tool_list()` and dispatched in `dispatch_tool()`
+
+### 9.7 — Session Bootstrap ✅
+
+- [x] On `initialize` handshake: auto-recalls last 24 h of memory (limit 5) from daemon
+- [x] Result embedded in `serverInfo.context` — every AI session starts pre-loaded with recent context
+- [x] Graceful fallback: if daemon not yet ready, bootstrap is skipped silently
+
+### 9.8 — Tests ✅
+
+- [x] Unit tests: `summarize_window` stats, write/query round-trip, kind filtering, ambient pruning,
+  ambient writer fires after one interval tick (async test with 1 s test interval)
+- [x] Integration tests: `MemoryRecord` JSON round-trip, `MemoryKind` snake-case serialisation,
+  optional fields skip `null` in JSON output
+
+-----
+
+## Phase 10 — Intero App 🔜
+
+The Intero desktop application built on VEYN infrastructure.
+Scope defined separately. Phases 8 and 9 are hard prerequisites.
 
 -----
 
@@ -194,5 +257,6 @@ complete before Phase 9 begins.
 |6    |Security + semantic compression — auth, intent engine, versioned API|✅     |
 |7    |Platform hardening — HID adapters, WASM proxy, token scopes         |✅     |
 |8    |Intero infrastructure — sessions, baselines, `intent_code`          |✅     |
-|9    |Intero app — physiological decision-support desktop application     |🔜     |
-|10   |SDK + ecosystem — language SDKs, DX tooling, agent integration      |✅     |
+|9    |Biometric memory layer — persistent memory, ambient writer, MCP     |✅     |
+|10   |Intero app — physiological decision-support desktop application     |🔜     |
+|11   |SDK + ecosystem — language SDKs, DX tooling, agent integration      |✅     |

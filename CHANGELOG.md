@@ -9,6 +9,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Biometric Memory Layer** (Phase 9 — all crates)
+  - New `MemoryRecord` and `MemoryQuery` types in `veyn-schemas` with `MemoryKind` enum
+    (`Ambient` | `Semantic`)
+  - SQLite migration adds `veyn_memory` table indexed on `timestamp_ms`, `topic`, and `kind`
+  - `memory.rs` module in `veyn-core`: `MemoryStore` wrapping the shared SQLite connection,
+    `write` / `query` / `summarize_window` operations, and `summarize_snapshots` helper
+  - Ambient writer background task (`memory::ambient_writer`) fires every 15 min (configurable),
+    reads the in-memory context ring buffer, collapses N snapshots into a statistical summary
+    (avg HR, avg HRV, dominant intent, duration), and writes one `Ambient` MemoryRecord;
+    skips idle/no-signal windows; oldest ambient records pruned when `max_records` is exceeded
+  - REST endpoints protected by existing auth middleware:
+    - `POST /v1/memory` — writes a `Semantic` MemoryRecord, auto-attaches current
+      physiological state (HR, HRV, intent, confidence) from latest context
+    - `GET /v1/memory?topic=&since=&until=&kind=&limit=` — returns matching records
+  - `[memory]` config section in `veyn.toml` / `veyn.toml.example`:
+    `enabled` (default true), `ambient_interval_secs` (default 900),
+    `max_records` (default 10 000)
+  - Two new MCP tools in `veyn-mcp`:
+    - `veyn_write_memory` (topic, summary) — POSTs to `/v1/memory`; biometric state
+      is attached automatically by the daemon
+    - `veyn_recall_memory` (topic?, since?, kind?) — GETs from `/v1/memory`; accepts
+      human-readable `since` strings like `"7d"`, `"24h"`, `"30d"`
+  - MCP session bootstrap: on every `initialize` handshake the server auto-recalls the
+    last 24 h of memory (limit 5) and embeds the result in `serverInfo.context`, so AI
+    sessions start pre-loaded with recent biometric memory without the agent needing to ask
+  - Unit tests for `summarize_window`, write/query round-trip, kind filtering, ambient
+    pruning, and the ambient writer firing; integration tests for `MemoryRecord`
+    serialisation and `MemoryKind` snake-case encoding
+
 - **Semantic Compression Engine** (`veyn-core/src/compression.rs`)
   - State Reduction Layer: delta filtering, temporal debounce per device class,
     magnitude threshold (epsilon) filtering to suppress micro-jitter
