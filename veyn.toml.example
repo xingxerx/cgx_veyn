@@ -21,6 +21,15 @@ cors_origins = []
 # audit_log_path = "~/.local/share/veyn/audit.log"
 # Strip raw keystroke content; expose only semantic intent (recommended: true)
 strip_raw_hid = true
+# Max REST requests per second per client IP (0 = disabled)
+rate_limit_rps = 100
+
+# Scope-limited tokens are configured in ~/.local/share/veyn/tokens.json:
+# [
+#   { "token": "<hex>", "label": "my-agent", "scopes": ["read"] },
+#   { "token": "<hex>", "label": "midi-only", "scopes": ["source:midi"] }
+# ]
+# Scope values: "read" (GET only), "source:<class>" (filter by adapter type)
 
 [adapters]
 # Emit synthetic biometric events (for development / CI)
@@ -31,6 +40,17 @@ ble = false
 eeg = false
 # UDP port for OSC input
 osc_port = 9000
+# Linux evdev HID adapter (/dev/input/event*) — keyboard, mouse, gamepad
+evdev = false
+# Linux raw USB HID adapter (/dev/hidraw*)
+hidraw = false
+# MIDI adapter (midir — first available port)
+midi = false
+# Serial/UART adapter
+# serial_port = "/dev/ttyUSB0"
+# serial_baud = 115200
+# Filesystem watcher — paths to watch recursively
+# fs_watch_paths = ["/tmp/veyn-watch"]
 
 [logging]
 # Tracing level: error | warn | info | debug | trace

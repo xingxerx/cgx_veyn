@@ -4,12 +4,31 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Machine-readable intent classification — agents can branch on this without NLP.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IntentCode {
+    Resting,
+    Active,
+    Stressed,
+    Idle,
+    Focus,
+    Recovery,
+    HealthConcern,
+    #[default]
+    Observing,
+}
+
 /// Semantic context snapshot — the AI-ready world-state summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextSnapshot {
     pub timestamp_ms: i64,
     pub session_id: String,
+    /// Human-readable intent description.
     pub intent: String,
+    /// Machine-readable intent code; agents branch on this, not the free-form string.
+    #[serde(default)]
+    pub intent_code: IntentCode,
     pub confidence: f64,
     pub active_devices: Vec<String>,
     pub state_deltas: Vec<StateDelta>,
@@ -23,6 +42,11 @@ pub struct StateDelta {
     pub value: f64,
     pub unit: String,
     pub ts: i64,
+    /// Adapter source class — lets agents filter deltas by type without inspecting device_id.
+    /// Values: "ble" | "mqtt" | "plugin" | "mock" | "healthkit" | "eeg" |
+    ///         "evdev" | "hidraw" | "midi" | "serial" | "fs" | "presence"
+    #[serde(default)]
+    pub source_class: String,
 }
 
 /// Notification sent from the daemon to a companion device (e.g. Apple Watch).
@@ -79,7 +103,7 @@ pub struct VeynEvent {
     /// Unix timestamp in milliseconds
     pub ts: i64,
     pub device_id: String,
-    /// Source adapter name: "mock" | "healthkit" | "ble" | "eeg"
+    /// Source adapter name: "mock" | "healthkit" | "ble" | "eeg" | "evdev" | …
     pub source: String,
     /// Metric name: "heart_rate" | "hrv" | "spo2" | …
     pub metric: String,

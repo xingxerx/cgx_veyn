@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use veyn_schemas::VeynEvent;
+use veyn_schemas::{IntentCode, VeynEvent};
 
 const DEFAULT_DEBOUNCE_MS: u64 = 200;
 const DEFAULT_EPSILON: f64 = 0.5;
@@ -24,6 +24,9 @@ pub struct RuleCondition {
 pub struct SemanticRule {
     pub name: String,
     pub intent: String,
+    /// Optional machine-readable code; defaults to Observing if absent.
+    #[serde(default)]
+    pub intent_code: Option<IntentCode>,
     #[serde(default = "default_confidence")]
     pub confidence: f64,
     #[serde(default)]
@@ -137,9 +140,9 @@ impl CompressionEngine {
         true
     }
 
-    /// Synthesize a human-readable intent string from the current metric state.
-    /// Returns `(intent, confidence)`.
-    pub fn synthesize(&self, state: &HashMap<String, f64>) -> (String, f64) {
+    /// Synthesize intent from the current metric state.
+    /// Returns `(intent_string, intent_code, confidence)`.
+    pub fn synthesize(&self, state: &HashMap<String, f64>) -> (String, IntentCode, f64) {
         for rule in &self.rules {
             if rule.conditions.iter().all(|c| {
                 state.get(&c.metric).is_some_and(|&v| match c.op.as_str() {
@@ -149,10 +152,11 @@ impl CompressionEngine {
                     _ => false,
                 })
             }) {
-                return (rule.intent.clone(), rule.confidence);
+                let code = rule.intent_code.clone().unwrap_or(IntentCode::Observing);
+                return (rule.intent.clone(), code, rule.confidence);
             }
         }
-        ("observing".to_string(), 0.5)
+        ("observing".to_string(), IntentCode::Observing, 0.5)
     }
 
     /// Fraction of raw events that passed the filter (0.0–1.0).
@@ -162,5 +166,107 @@ impl CompressionEngine {
         } else {
             self.passed_count as f64 / self.raw_count as f64
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use veyn_schemas::VeynEvent;
+
+    fn make_engine() -> CompressionEngine {
+        // Set debounce to 0 so tests are deterministic without sleeps.
+        let debounce = [("heart_rate", 0u64)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        let epsilons = [("heart_rate", 1.0f64)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        CompressionEngine::new("/nonexistent/rules.toml".to_string(), debounce, epsilons)
+    }
+
+    fn make_event(device: &str, metric: &str, value: f64) -> VeynEvent {
+        VeynEvent::new(device, "mock", metric, value, "bpm")
+    }
+
+    #[test]
+    fn should_emit_first_event_always() {
+        let mut eng = make_engine();
+        let ev = make_event("dev1", "heart_rate", 70.0);
+        assert!(eng.should_emit(&ev));
+    }
+
+    #[test]
+    fn should_drop_below_epsilon() {
+        let mut eng = make_engine();
+        assert!(eng.should_emit(&make_event("dev1", "heart_rate", 70.0)));
+        // delta = 0.5 < epsilon 1.0 → drop
+        assert!(!eng.should_emit(&make_event("dev1", "heart_rate", 70.5)));
+    }
+
+    #[test]
+    fn should_pass_above_epsilon() {
+        let mut eng = make_engine();
+        assert!(eng.should_emit(&make_event("dev1", "heart_rate", 70.0)));
+        // delta = 2.0 > epsilon 1.0 → pass
+        assert!(eng.should_emit(&make_event("dev1", "heart_rate", 72.0)));
+    }
+
+    #[test]
+    fn compression_ratio_reflects_drops() {
+        let mut eng = make_engine();
+        eng.should_emit(&make_event("dev1", "heart_rate", 70.0));
+        eng.should_emit(&make_event("dev1", "heart_rate", 70.1));
+        eng.should_emit(&make_event("dev1", "heart_rate", 70.2));
+        // 1 pass, 2 drops → ratio 0.333…
+        assert!((eng.compression_ratio() - 1.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn synthesize_no_rules_returns_observing() {
+        let eng = make_engine();
+        let state = HashMap::new();
+        let (intent, code, conf) = eng.synthesize(&state);
+        assert_eq!(intent, "observing");
+        assert_eq!(code, IntentCode::Observing);
+        assert_eq!(conf, 0.5);
+    }
+
+    #[test]
+    fn synthesize_with_rules_matches_first() {
+        use std::io::Write;
+        // Write a temp rules file
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_rules.toml");
+        let content = r#"
+[[rules]]
+name = "high_hr"
+intent = "stressed"
+intent_code = "stressed"
+confidence = 0.9
+[[rules.conditions]]
+metric = "heart_rate"
+op = "above"
+threshold = 100.0
+"#;
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+
+        let eng = CompressionEngine::new(
+            path.to_string_lossy().to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let mut state = HashMap::new();
+        state.insert("heart_rate".to_string(), 110.0);
+        let (intent, code, conf) = eng.synthesize(&state);
+        assert_eq!(intent, "stressed");
+        assert_eq!(code, IntentCode::Stressed);
+        assert!((conf - 0.9).abs() < 0.01);
     }
 }

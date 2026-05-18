@@ -5,10 +5,12 @@ mod config;
 mod dispatcher;
 mod presence;
 
+use std::time::Duration;
+
 use anyhow::Result;
 use clap::Parser;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use veyn_adapters::{
     ble::BleAdapter, eeg::EegAdapter, healthkit::HealthKitAdapter, mock::MockAdapter, VeynAdapter,
 };
@@ -65,14 +67,18 @@ async fn main() -> Result<()> {
 
     // Load or generate the bearer token.
     let token = auth::load_or_create_token(cfg.token_path.as_deref())?;
+    let scoped_tokens = auth::load_scoped_tokens();
     if cfg.require_auth {
         info!("Auth enabled — token path: {:?}", auth::token_path());
+        if !scoped_tokens.is_empty() {
+            info!(count = scoped_tokens.len(), "loaded scope-limited tokens");
+        }
     } else {
-        tracing::warn!("Auth DISABLED — do not use in production");
+        warn!("Auth DISABLED — do not use in production");
     }
 
     let (event_tx, event_rx) = mpsc::channel::<VeynEvent>(1_024);
-    let state = AppState::new(token, cfg.clone());
+    let state = AppState::new(token, scoped_tokens, cfg.clone());
 
     // Dispatcher.
     {
@@ -112,6 +118,44 @@ async fn main() -> Result<()> {
     // EEG/OSC adapter.
     if cfg.eeg_enabled {
         spawn_adapter(EegAdapter::new(cfg.osc_port), event_tx.clone());
+    }
+
+    // Platform-specific adapters.
+    #[cfg(target_os = "linux")]
+    {
+        if cfg.evdev_enabled {
+            spawn_adapter(
+                veyn_adapters::evdev_adapter::EvdevAdapter::new(),
+                event_tx.clone(),
+            );
+        }
+        if cfg.hidraw_enabled {
+            spawn_adapter(
+                veyn_adapters::hidraw::HidrawAdapter::new(),
+                event_tx.clone(),
+            );
+        }
+    }
+
+    // MIDI adapter.
+    if cfg.midi_enabled {
+        spawn_adapter(veyn_adapters::midi::MidiAdapter::new(), event_tx.clone());
+    }
+
+    // Serial adapter.
+    if let Some(ref serial_port) = cfg.serial_port {
+        spawn_adapter(
+            veyn_adapters::serial_adapter::SerialAdapter::new(serial_port.clone(), cfg.serial_baud),
+            event_tx.clone(),
+        );
+    }
+
+    // Filesystem watcher.
+    if !cfg.fs_watch_paths.is_empty() {
+        spawn_adapter(
+            veyn_adapters::fs_watcher::FsWatcherAdapter::new(cfg.fs_watch_paths.clone()),
+            event_tx.clone(),
+        );
     }
 
     // WASM plugin adapters.
@@ -160,11 +204,29 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Spawn an adapter with automatic hot-plug retry using exponential backoff.
+/// The adapter restarts on error; a clean `Ok(())` exit stops the loop.
 fn spawn_adapter<A: VeynAdapter + 'static>(adapter: A, tx: mpsc::Sender<VeynEvent>) {
     let name = adapter.name().to_owned();
     tokio::spawn(async move {
-        if let Err(e) = adapter.start(tx).await {
-            error!(adapter = %name, "adapter error: {}", e);
+        let mut delay = Duration::from_secs(1);
+        loop {
+            if tx.is_closed() {
+                break;
+            }
+            match adapter.start(tx.clone()).await {
+                Ok(()) => break, // graceful exit
+                Err(e) => {
+                    warn!(
+                        adapter = %name,
+                        delay_ms = delay.as_millis(),
+                        "adapter error — retrying: {}",
+                        e
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay = (delay * 2).min(Duration::from_secs(60));
+                }
+            }
         }
     });
 }

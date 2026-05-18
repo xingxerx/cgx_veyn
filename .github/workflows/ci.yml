@@ -23,7 +23,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install system dependencies
-        run: sudo apt-get install -y libdbus-1-dev pkg-config
+        run: sudo apt-get install -y libdbus-1-dev pkg-config libasound2-dev libudev-dev
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -57,7 +57,7 @@ jobs:
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y libdbus-1-dev pkg-config
+        run: sudo apt-get install -y libdbus-1-dev pkg-config libasound2-dev libudev-dev
 
       - name: Cache cargo
         uses: actions/cache@v4

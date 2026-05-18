@@ -39,6 +39,7 @@ struct TomlSecurity {
     cors_origins: Option<Vec<String>>,
     audit_log_path: Option<String>,
     strip_raw_hid: Option<bool>,
+    rate_limit_rps: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -47,6 +48,12 @@ struct TomlAdapters {
     ble: Option<bool>,
     eeg: Option<bool>,
     osc_port: Option<u16>,
+    evdev: Option<bool>,
+    hidraw: Option<bool>,
+    midi: Option<bool>,
+    serial_port: Option<String>,
+    serial_baud: Option<u32>,
+    fs_watch_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -90,6 +97,12 @@ pub struct Config {
     pub ble_enabled: bool,
     pub eeg_enabled: bool,
     pub osc_port: u16,
+    pub evdev_enabled: bool,
+    pub hidraw_enabled: bool,
+    pub midi_enabled: bool,
+    pub serial_port: Option<String>,
+    pub serial_baud: u32,
+    pub fs_watch_paths: Vec<String>,
     pub jsonl_path: String,
     pub plugins_dir: String,
     pub mqtt_url: Option<String>,
@@ -99,6 +112,8 @@ pub struct Config {
     pub cors_origins: Vec<String>,
     pub audit_log_path: Option<String>,
     pub strip_raw_hid: bool,
+    /// Max requests per second per client IP; None means no rate limit.
+    pub rate_limit_rps: Option<u32>,
     pub rules_path: String,
     pub context_history_size: usize,
     pub debounce_ms: HashMap<String, u64>,
@@ -115,6 +130,12 @@ impl Default for Config {
             ble_enabled: false,
             eeg_enabled: false,
             osc_port: 9000,
+            evdev_enabled: false,
+            hidraw_enabled: false,
+            midi_enabled: false,
+            serial_port: None,
+            serial_baud: 115200,
+            fs_watch_paths: Vec::new(),
             jsonl_path: "veyn-events.jsonl".to_string(),
             plugins_dir: "plugins".to_string(),
             mqtt_url: None,
@@ -124,6 +145,7 @@ impl Default for Config {
             cors_origins: vec![],
             audit_log_path: None,
             strip_raw_hid: true,
+            rate_limit_rps: Some(100),
             rules_path: "rules.toml".to_string(),
             context_history_size: 32,
             debounce_ms: default_debounce_ms(),
@@ -191,6 +213,9 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     if let Some(v) = file.security.strip_raw_hid {
         cfg.strip_raw_hid = v;
     }
+    if let Some(v) = file.security.rate_limit_rps {
+        cfg.rate_limit_rps = if v == 0 { None } else { Some(v) };
+    }
     if let Some(v) = file.adapters.mock {
         cfg.mock_mode = v;
     }
@@ -202,6 +227,24 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     }
     if let Some(v) = file.adapters.osc_port {
         cfg.osc_port = v;
+    }
+    if let Some(v) = file.adapters.evdev {
+        cfg.evdev_enabled = v;
+    }
+    if let Some(v) = file.adapters.hidraw {
+        cfg.hidraw_enabled = v;
+    }
+    if let Some(v) = file.adapters.midi {
+        cfg.midi_enabled = v;
+    }
+    if let Some(v) = file.adapters.serial_port {
+        cfg.serial_port = Some(v);
+    }
+    if let Some(v) = file.adapters.serial_baud {
+        cfg.serial_baud = v;
+    }
+    if let Some(v) = file.adapters.fs_watch_paths {
+        cfg.fs_watch_paths = v;
     }
     if let Some(v) = file.logging.jsonl_path {
         cfg.jsonl_path = v;
