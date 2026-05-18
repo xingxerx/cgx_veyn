@@ -1,0 +1,57 @@
+version: "3.9"
+
+# Local dev stack: VEYN daemon + mock consumer agent.
+# Usage: docker-compose up --build
+#
+# The daemon runs in mock mode (no real hardware needed).
+# Expose port 7700 to your host for REST/WebSocket access.
+
+services:
+  veyn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: veyn-core:latest
+    container_name: veyn-daemon
+    restart: unless-stopped
+    ports:
+      - "7700:7700"    # REST + WebSocket API
+      - "7701:7701"    # HealthKit TCP relay
+    environment:
+      VEYN_MOCK: "true"
+      VEYN_LOG: "/data/veyn-events.jsonl"
+      RUST_LOG: "info"
+    volumes:
+      - veyn-data:/data
+      - ./rules.toml:/app/rules.toml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Example consumer: reads context snapshot every 5 s and prints it.
+  consumer:
+    image: curlimages/curl:latest
+    container_name: veyn-consumer
+    restart: unless-stopped
+    depends_on:
+      veyn:
+        condition: service_healthy
+    environment:
+      VEYN_HOST: "veyn:7700"
+    entrypoint: >
+      sh -c '
+        TOKEN=$(cat /run/secrets/veyn_token 2>/dev/null || echo "");
+        while true; do
+          curl -s -H "Authorization: Bearer $$TOKEN"
+               http://$$VEYN_HOST/v1/context/current | head -c 512;
+          echo;
+          sleep 5;
+        done
+      '
+    volumes:
+      - veyn-data:/data:ro
+
+volumes:
+  veyn-data:

@@ -25,3 +25,5 @@ uuid           = { workspace = true }
 axum           = { version = "0.7", features = ["ws"] }
 tower-http     = { version = "0.5", features = ["cors"] }
 tower          = { version = "0.4", features = ["limit", "util"] }
+tokio-stream   = { version = "0.1", features = ["sync"] }
+governor       = { version = "0.6", default-features = false, features = ["std", "dashmap"] }

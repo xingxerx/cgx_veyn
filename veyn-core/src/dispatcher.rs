@@ -57,37 +57,36 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
 
         state.ingest(event.clone());
 
-        // After each ingested event, synthesize a context snapshot.
-        let metric_state: HashMap<String, f64> = state
-            .latest_metrics
-            .lock()
-            .unwrap()
-            .values()
-            .map(|e| (e.metric.clone(), e.value))
-            .collect();
+        // Build metric state and deltas in a single lock scope to avoid contention.
+        let (metric_state, deltas) = {
+            let metrics = state.latest_metrics.lock().unwrap();
+            let metric_state: HashMap<String, f64> = metrics
+                .values()
+                .map(|e| (e.metric.clone(), e.value))
+                .collect();
+            let deltas: Vec<StateDelta> = metrics
+                .values()
+                .map(|e| StateDelta {
+                    device_id: e.device_id.clone(),
+                    metric: e.metric.clone(),
+                    value: e.value,
+                    unit: e.unit.clone(),
+                    ts: e.ts,
+                    source_class: e.source.clone(),
+                })
+                .collect();
+            (metric_state, deltas)
+        };
 
-        let (intent, confidence) = engine.synthesize(&metric_state);
+        let (intent, intent_code, confidence) = engine.synthesize(&metric_state);
 
         let active_devices: Vec<String> = state.devices.lock().unwrap().keys().cloned().collect();
-
-        let deltas: Vec<StateDelta> = state
-            .latest_metrics
-            .lock()
-            .unwrap()
-            .values()
-            .map(|e| StateDelta {
-                device_id: e.device_id.clone(),
-                metric: e.metric.clone(),
-                value: e.value,
-                unit: e.unit.clone(),
-                ts: e.ts,
-            })
-            .collect();
 
         let snapshot = ContextSnapshot {
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
             session_id: (*state.session_id).clone(),
             intent,
+            intent_code,
             confidence,
             active_devices,
             state_deltas: deltas,
@@ -95,7 +94,6 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
 
         state.update_context(snapshot);
 
-        // Publish updated compression ratio.
         *state.compression_ratio.lock().unwrap() = engine.compression_ratio();
     }
 }

@@ -12,6 +12,7 @@ use veyn_schemas::{
     ContextSnapshot, DeviceState, PresenceInfo, VeynDevice, VeynEvent, VeynNotification,
 };
 
+use crate::auth::ScopedToken;
 use crate::config::Config;
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,6 +25,7 @@ pub struct PluginInfo {
 const RECENT_CAP: usize = 1_000;
 const BROADCAST_CAP: usize = 256;
 const NOTIF_CAP: usize = 64;
+const CONTEXT_BROADCAST_CAP: usize = 64;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -40,17 +42,22 @@ pub struct AppState {
     pub raw_event_count: Arc<AtomicU64>,
     pub plugins: Arc<Mutex<Vec<PluginInfo>>>,
     pub auth_token: Arc<String>,
+    /// Additional scope-limited tokens beyond the primary full-access token.
+    pub scoped_tokens: Arc<Vec<ScopedToken>>,
     pub config: Arc<Config>,
     pub session_id: Arc<String>,
     pub context_history: Arc<Mutex<VecDeque<ContextSnapshot>>>,
     pub latest_context: Arc<Mutex<Option<ContextSnapshot>>>,
     pub compression_ratio: Arc<Mutex<f64>>,
+    /// Broadcast channel for context snapshots (used by SSE subscribers).
+    pub context_broadcast_tx: broadcast::Sender<ContextSnapshot>,
 }
 
 impl AppState {
-    pub fn new(auth_token: String, config: Config) -> Self {
+    pub fn new(auth_token: String, scoped_tokens: Vec<ScopedToken>, config: Config) -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAP);
         let (notification_tx, _) = broadcast::channel(NOTIF_CAP);
+        let (context_broadcast_tx, _) = broadcast::channel(CONTEXT_BROADCAST_CAP);
         let session_id = uuid::Uuid::new_v4().to_string();
         let history_cap = config.context_history_size;
         let config = Arc::new(config);
@@ -66,11 +73,13 @@ impl AppState {
             raw_event_count: Arc::new(AtomicU64::new(0)),
             plugins: Arc::new(Mutex::new(Vec::new())),
             auth_token: Arc::new(auth_token),
+            scoped_tokens: Arc::new(scoped_tokens),
             config,
             session_id: Arc::new(session_id),
             context_history: Arc::new(Mutex::new(VecDeque::with_capacity(history_cap))),
             latest_context: Arc::new(Mutex::new(None)),
             compression_ratio: Arc::new(Mutex::new(1.0)),
+            context_broadcast_tx,
         }
     }
 
@@ -107,7 +116,7 @@ impl AppState {
         let _ = self.broadcast_tx.send(event);
     }
 
-    /// Push a new context snapshot into the history ring buffer.
+    /// Push a new context snapshot into the history ring buffer and broadcast it.
     pub fn update_context(&self, snapshot: ContextSnapshot) {
         let cap = self.config.context_history_size;
         let mut hist = self.context_history.lock().unwrap();
@@ -116,6 +125,7 @@ impl AppState {
         }
         hist.push_back(snapshot.clone());
         drop(hist);
-        *self.latest_context.lock().unwrap() = Some(snapshot);
+        *self.latest_context.lock().unwrap() = Some(snapshot.clone());
+        let _ = self.context_broadcast_tx.send(snapshot);
     }
 }

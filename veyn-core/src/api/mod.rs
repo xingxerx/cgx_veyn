@@ -1,13 +1,19 @@
 pub mod routes;
 pub mod state;
 
+use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU32;
+use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{HeaderValue, Method, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Json, Response},
 };
+use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+use serde_json::json;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing::info;
 
@@ -21,30 +27,69 @@ pub async fn serve(
 ) -> Result<()> {
     let cors = build_cors(&state.config.cors_origins, port);
 
-    // Layer order: last added is outermost (first to process requests).
-    // Request flow: cors → host_guard → require_bearer → router
+    // Build optional per-IP rate limiter.
+    let rate_limiter: Option<Arc<DefaultKeyedRateLimiter<IpAddr>>> =
+        state.config.rate_limit_rps.and_then(|rps| {
+            NonZeroU32::new(rps).map(|n| {
+                info!(rps, "rate limiting enabled");
+                Arc::new(RateLimiter::keyed(Quota::per_second(n)))
+            })
+        });
+
+    // Layer order: last added = outermost (first to process requests).
+    // Request flow: cors → host_guard → rate_limit → require_bearer → router
     let app = routes::router(state.clone())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,
         ))
+        .layer(middleware::from_fn_with_state(
+            rate_limiter,
+            rate_limit_middleware,
+        ))
         .layer(middleware::from_fn_with_state(state.clone(), host_guard))
         .layer(cors);
 
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(addr = %addr, "API listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await?;
 
     info!("API server shut down cleanly");
     Ok(())
 }
 
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+
+async fn rate_limit_middleware(
+    State(limiter): State<Option<Arc<DefaultKeyedRateLimiter<IpAddr>>>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if let Some(lim) = limiter {
+        let ip = addr.ip();
+        if lim.check_key(&ip).is_err() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({ "error": "rate limit exceeded" })),
+            )
+                .into_response();
+        }
+    }
+    next.run(req).await
+}
+
+// ── Host guard ────────────────────────────────────────────────────────────────
+
 /// Reject requests whose `Host` header is not localhost or 127.0.0.1,
-/// blocking DNS-rebinding attacks. Configured CORS origins are also allowed.
+/// blocking DNS-rebinding attacks.
 async fn host_guard(
     State(state): State<AppState>,
     req: Request,

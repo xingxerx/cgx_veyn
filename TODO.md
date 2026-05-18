@@ -10,8 +10,8 @@
 Auth middleware, CORS, host-guard, audit log, and `strip_raw_hid` are implemented.
 The following gaps remain:
 
-- [ ] 🟡 Add **scope-limited tokens** — a token can be created with read-only or specific device-class access (e.g. MIDI only, no HID)
-- [ ] 🟡 Add **rate limiting** on REST endpoints — token-bucket per client IP via `tower` middleware (e.g. max 100 req/s)
+- [x] 🟡 Add **scope-limited tokens** — `tokens.json` supports per-token scopes: `"read"` (GET only) and `"source:<class>"` (filter by adapter type e.g. `"source:ble"`, `"source:midi"`)
+- [x] 🟡 Add **rate limiting** on REST endpoints — token-bucket per client IP via `governor` crate (configurable via `rate_limit_rps` in `[security]`, default 100 req/s)
 - [ ] 🟢 Consider **mutual TLS (mTLS)** option for high-security deployments
 
 -----
@@ -29,42 +29,38 @@ The WASM runtime loads plugins and exposes `veyn::log`, `veyn::time_ms`, and `ve
 
 ## 3. 🔴 Critical: `ContextSnapshot` Intent Schema
 
-`intent` is a raw free-form string (e.g. `"user in calm/resting state"`). This is unparseable by agents without prompt engineering. The fallback when no `rules.toml` match is always `("observing", 0.5)` — useless for non-biometric sources.
-
-- [ ] 🔴 Add a structured `intent_code` field alongside `intent` — machine-readable enum string (e.g. `"resting"`, `"active"`, `"stressed"`, `"idle"`) so agents can branch on it without NLP
-- [ ] 🟡 Add a `source_class` field to `StateDelta` — lets agents filter deltas by adapter type (`ble`, `mqtt`, `plugin`, etc.) without inspecting `device_id`
-- [ ] 🟡 Ship a default `rules.toml` that covers non-biometric signals (MQTT, filesystem, MIDI) so intent synthesis works out-of-the-box beyond heart rate
+- [x] 🔴 Add a structured `intent_code` field — machine-readable enum (`"resting"`, `"active"`, `"stressed"`, `"idle"`, `"focus"`, `"recovery"`, `"health_concern"`, `"observing"`) so agents can branch without NLP
+- [x] 🟡 Add a `source_class` field to `StateDelta` — lets agents filter deltas by adapter type (`ble`, `mqtt`, `plugin`, etc.) without inspecting `device_id`
+- [x] 🟡 Ship a default `rules.toml` that covers non-biometric signals (MQTT, filesystem, MIDI) so intent synthesis works out-of-the-box beyond heart rate
 
 -----
 
 ## 4. 🟡 High: `veyn-core` Daemon Stability
 
-- [ ] 🟡 Implement **device hot-plug/unplug detection** — daemon must not crash or stall when a BLE or serial device disconnects mid-session; adapters should self-recover with exponential backoff
-- [ ] 🟡 The dispatcher locks `latest_metrics` twice per event in rapid succession (once for synthesis, once for deltas) — consolidate into a single lock scope to avoid contention under high event rates
+- [x] 🟡 Implement **device hot-plug/unplug detection** — `spawn_adapter` now wraps every adapter in an exponential-backoff retry loop (1s → 2s → … → 60s max); adapters self-recover on disconnect
+- [x] 🟡 The dispatcher locks `latest_metrics` twice per event — consolidated into a single lock scope in `dispatcher.rs`
 - [ ] 🟢 Add Prometheus metrics endpoint `GET /metrics` for Grafana integration
 
 -----
 
 ## 5. 🟡 High: `veyn-adapters` — Platform Coverage
 
-- [ ] 🔴 Linux: `evdev` HID adapter — keyboard, mouse, gamepad via `/dev/input/event*`
-- [ ] 🔴 Linux: `hidraw` adapter — raw USB HID via `/dev/hidraw*`
+- [x] 🔴 Linux: `evdev` HID adapter — keyboard, mouse, gamepad via `/dev/input/event*`
+- [x] 🔴 Linux: `hidraw` adapter — raw USB HID via `/dev/hidraw*`
 - [ ] 🟡 macOS: `IOKit`/`IOHIDManager` adapter
 - [ ] 🟡 Windows: `WinUSB`/`RawInput` adapter
-- [ ] 🟡 MIDI adapter (`midir` crate) — CC events, note on/off, clock
-- [ ] 🟡 Serial/UART adapter (`serialport` crate) — configurable baud, parity, stop bits
-- [ ] 🟡 Filesystem watcher adapter (`notify` crate) — emit events on file create/modify/delete for specified paths
+- [x] 🟡 MIDI adapter (`midir` crate) — CC events, note on/off, clock
+- [x] 🟡 Serial/UART adapter (`serialport` crate) — configurable baud, parity, stop bits
+- [x] 🟡 Filesystem watcher adapter (`notify` crate) — emit events on file create/modify/delete for specified paths
 - [ ] 🟢 Audio level adapter — RMS/peak metering from default input device (`cpal` crate)
 
 -----
 
 ## 6. 🟡 High: API Contract
 
-`/v1/context/subscribe` is documented in `README.md` and the MCP tool list but has no implementation in `routes.rs`. The WebSocket stream has no filtering.
-
-- [ ] 🔴 Implement `GET /v1/context/subscribe` (SSE) — declarative filter DSL (`{ "intents": ["resting"], "min_confidence": 0.7 }`) as documented
-- [ ] 🟡 WebSocket `/stream`: support client-sent subscribe messages to filter by device class or metric name — currently broadcasts everything to all subscribers
-- [ ] 🟡 Add OpenAPI 3.0 spec (`openapi.yaml`) and keep it in sync with `routes.rs`
+- [x] 🔴 Implement `GET /v1/context/subscribe` (SSE) — declarative filter DSL (`intents`, `min_confidence`, `source_class` query params) as documented
+- [x] 🟡 WebSocket `/stream`: support client-sent subscribe messages to filter by device class or metric name — send `{"type":"subscribe","filter":{"device_class":["ble"],"metrics":["heart_rate"]}}` at runtime
+- [x] 🟡 Add OpenAPI 3.0 spec (`openapi.yaml`) and keep it in sync with `routes.rs`
 
 -----
 
@@ -81,20 +77,16 @@ The Rust guest SDK (`/sdk`) is complete. No other language SDKs exist.
 
 ## 8. 🟡 High: Testing
 
-No integration or unit tests exist anywhere in the workspace. CI only runs `fmt`, `clippy`, and `cargo build`.
-
-- [ ] 🟡 Add unit tests for `CompressionEngine` — debounce logic, epsilon filtering, rule matching, compression ratio calculation
+- [x] 🟡 Add unit tests for `CompressionEngine` — debounce logic, epsilon filtering, rule matching, compression ratio calculation (12 tests in `compression.rs`)
 - [ ] 🟡 Add integration test harness — spin up daemon in mock+no-auth mode, inject synthetic events via the mock adapter, assert `/v1/context/current` output matches expected intent
-- [ ] 🟡 Add auth middleware tests — verify token rejection, missing header, query-param path, `/health` bypass
+- [x] 🟡 Add auth middleware tests — token extraction from header/query, read-only scope enforcement, scoped token source filtering (6 tests in `auth.rs`)
 - [ ] 🟢 Add CI step to run `cargo test --workspace`
 
 -----
 
 ## 9. 🟢 Developer Experience
 
-The web dashboard (`dashboard.html`) is implemented and served at `/`. `veyn doctor` and `docker-compose.yml` are missing.
-
-- [ ] 🟢 Add `docker-compose.yml` for a local dev stack (daemon + example consumer agent)
+- [x] 🟢 Add `docker-compose.yml` for a local dev stack (daemon in mock mode + example consumer agent)
 - [ ] 🟢 Add `veyn doctor` CLI subcommand — checks Rust toolchain, system deps, device permissions, token validity, daemon reachability
 - [ ] 🟢 Dashboard: add intent history sparkline and compression ratio gauge to the existing live feed UI
 
@@ -125,3 +117,20 @@ The following items from the original TODO are implemented in the codebase and r
 - ✅ `veyn-mcp` — stdio MCP server with full tool list
 - ✅ Graceful shutdown — SIGTERM/SIGINT drain
 - ✅ Config system — CLI > env > `veyn.toml` > defaults
+- ✅ Scope-limited tokens — `tokens.json` with per-token scopes (`"read"`, `"source:<class>"`)
+- ✅ Rate limiting — per-IP token bucket via `governor` crate, configurable `rate_limit_rps`
+- ✅ `intent_code` field — machine-readable `IntentCode` enum on `ContextSnapshot`
+- ✅ `source_class` field — on `StateDelta`, lets agents filter without NLP
+- ✅ Non-biometric rules — MIDI, filesystem, keyboard, MQTT/occupancy rules in `rules.toml`
+- ✅ Device hot-plug retry — exponential backoff in `spawn_adapter`
+- ✅ Dispatcher lock contention fix — single lock scope for metric_state + deltas
+- ✅ Linux evdev adapter — `/dev/input/event*` keyboard, mouse, gamepad
+- ✅ Linux hidraw adapter — `/dev/hidraw*` raw USB HID
+- ✅ MIDI adapter — `midir` CC/note/clock events
+- ✅ Serial/UART adapter — `serialport` KEY=FLOAT line protocol
+- ✅ Filesystem watcher adapter — `notify` create/modify/delete events
+- ✅ `GET /v1/context/subscribe` SSE — declarative filter DSL
+- ✅ WebSocket client-side subscribe filtering — runtime filter messages
+- ✅ OpenAPI 3.0 spec — `openapi.yaml` covering all `/v1/` routes
+- ✅ `docker-compose.yml` — local dev stack with mock mode
+- ✅ 12 unit tests — `CompressionEngine` + auth middleware

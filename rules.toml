@@ -5,20 +5,26 @@
 # If no rule matches, intent defaults to "observing" with confidence 0.5.
 #
 # Condition operators: "above" | "below" | "equals"
+# intent_code values: "resting" | "active" | "stressed" | "idle" |
+#                     "focus" | "recovery" | "health_concern" | "observing"
+
+# ── Biometric rules ────────────────────────────────────────────────────────────
 
 [[rules]]
-name       = "physical_stress"
-intent     = "user under physical stress"
-confidence = 0.85
+name        = "physical_stress"
+intent      = "user under physical stress"
+intent_code = "stressed"
+confidence  = 0.85
 [[rules.conditions]]
 metric    = "heart_rate"
 op        = "above"
 threshold = 100.0
 
 [[rules]]
-name       = "deep_focus_calm"
-intent     = "user in deep focus or calm state"
-confidence = 0.88
+name        = "deep_focus_calm"
+intent      = "user in deep focus or calm state"
+intent_code = "focus"
+confidence  = 0.88
 [[rules.conditions]]
 metric    = "heart_rate"
 op        = "below"
@@ -29,37 +35,113 @@ op        = "above"
 threshold = 50.0
 
 [[rules]]
-name       = "resting"
-intent     = "user resting or sleeping"
-confidence = 0.80
+name        = "resting"
+intent      = "user resting or sleeping"
+intent_code = "resting"
+confidence  = 0.80
 [[rules.conditions]]
 metric    = "heart_rate"
 op        = "below"
 threshold = 55.0
 
 [[rules]]
-name       = "moderate_activity"
-intent     = "user in moderate physical activity"
-confidence = 0.75
+name        = "recovery"
+intent      = "user in post-exertion recovery"
+intent_code = "recovery"
+confidence  = 0.78
+[[rules.conditions]]
+metric    = "heart_rate"
+op        = "above"
+threshold = 65.0
+[[rules.conditions]]
+metric    = "hrv"
+op        = "above"
+threshold = 40.0
+
+[[rules]]
+name        = "moderate_activity"
+intent      = "user in moderate physical activity"
+intent_code = "active"
+confidence  = 0.75
 [[rules.conditions]]
 metric    = "steps"
 op        = "above"
 threshold = 50.0
 
 [[rules]]
-name       = "elevated_spo2_concern"
-intent     = "user showing low blood oxygen — possible health concern"
-confidence = 0.90
+name        = "low_blood_oxygen"
+intent      = "user showing low blood oxygen — possible health concern"
+intent_code = "health_concern"
+confidence  = 0.90
 [[rules.conditions]]
 metric    = "spo2"
 op        = "below"
 threshold = 92.0
 
 [[rules]]
-name       = "normal_activity"
-intent     = "user in normal activity state"
-confidence = 0.70
+name        = "normal_activity"
+intent      = "user in normal activity state"
+intent_code = "active"
+confidence  = 0.70
 [[rules.conditions]]
 metric    = "heart_rate"
 op        = "above"
 threshold = 60.0
+
+# ── MIDI rules ─────────────────────────────────────────────────────────────────
+
+[[rules]]
+name        = "midi_active_performance"
+intent      = "user actively performing — MIDI note stream detected"
+intent_code = "active"
+confidence  = 0.80
+[[rules.conditions]]
+metric    = "midi_note_on"
+op        = "above"
+threshold = 0.0
+
+[[rules]]
+name        = "midi_modulation_high"
+intent      = "user expression elevated via MIDI modulation wheel"
+intent_code = "active"
+confidence  = 0.72
+[[rules.conditions]]
+metric    = "midi_cc_1"
+op        = "above"
+threshold = 80.0
+
+# ── Filesystem / environment rules ────────────────────────────────────────────
+
+[[rules]]
+name        = "fs_activity"
+intent      = "filesystem activity detected in watched directory"
+intent_code = "active"
+confidence  = 0.65
+[[rules.conditions]]
+metric    = "fs_event"
+op        = "above"
+threshold = 0.5
+
+# ── HID / keyboard rules ──────────────────────────────────────────────────────
+
+[[rules]]
+name        = "keyboard_activity"
+intent      = "user actively typing — keyboard input detected"
+intent_code = "active"
+confidence  = 0.70
+[[rules.conditions]]
+metric    = "key_event"
+op        = "above"
+threshold = 0.5
+
+# ── MQTT / smart-home rules ───────────────────────────────────────────────────
+
+[[rules]]
+name        = "environment_idle"
+intent      = "environment idle — no occupancy or activity signals"
+intent_code = "idle"
+confidence  = 0.68
+[[rules.conditions]]
+metric    = "occupancy"
+op        = "below"
+threshold = 0.5
