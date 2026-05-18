@@ -185,3 +185,49 @@ class VeynDevice:
             state=d["state"],
             last_seen=int(d["last_seen"]),
         )
+
+
+# ── ContextTier ───────────────────────────────────────────────────────────────
+
+# Context tier constants — controls which data layer a token exposes.
+# Configure daemon default in veyn.toml: context_tier = "semantic"
+# Set token ceiling via scope "tier:semantic" in tokens.json.
+TIER_RAW      = "raw"       # full VeynEvent stream, unfiltered
+TIER_FILTERED = "filtered"  # compression-filtered events only
+TIER_SEMANTIC = "semantic"  # ContextSnapshot only; no raw events (AI agents)
+
+# Type alias
+ContextTier = str
+
+
+# ── SessionFrame ──────────────────────────────────────────────────────────────
+
+@dataclass
+class SessionFrame:
+    """Wraps a VeynEvent when a recording session is active (WS Raw/Filtered tier)."""
+
+    session_id: str
+    channel: str
+    event: VeynEvent
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "SessionFrame":
+        return cls(
+            session_id=d["session_id"],
+            channel=d["channel"],
+            event=VeynEvent.from_dict(d["event"]),
+        )
+
+
+# ── BaselineHistoryPoint ──────────────────────────────────────────────────────
+
+@dataclass
+class BaselineDailyPoint:
+    """One UTC-day mean value from the baseline history endpoint."""
+
+    ts: int
+    mean: float
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "BaselineDailyPoint":
+        return cls(ts=int(d["ts"]), mean=float(d["mean"]))

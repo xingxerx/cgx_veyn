@@ -70,8 +70,8 @@ fail or panic at runtime.
 - [x] ✅ MQTT adapter — IoT / smart home output
 - [x] ✅ Linux: `evdev` HID adapter — keyboard, mouse, gamepad via `/dev/input/event*`; emit `VeynEvent` with `source = "hid"` and appropriate metric names
 - [x] ✅ Linux: `hidraw` adapter — raw USB HID for devices not covered by `evdev`
-- [ ] 🟡 macOS: `IOKit`/`IOHIDManager` adapter — equivalent HID coverage on macOS
-- [ ] 🟡 Windows: `WinUSB` / `RawInput` adapter — equivalent HID coverage on Windows
+- [x] ✅ macOS: `IOKit`/`IOHIDManager` adapter — equivalent HID coverage on macOS (`veyn-adapters/src/iokit.rs`)
+- [x] ✅ Windows: `WinUSB` / `RawInput` adapter — equivalent HID coverage on Windows (`veyn-adapters/src/winusb.rs`)
 - [x] ✅ MIDI adapter (`midir` crate) — CC events, note on/off, clock; emit as `VeynEvent` with `source = "midi"`
 - [x] ✅ Serial/UART adapter (`serialport` crate) — configurable baud, parity, stop bits; useful for custom biometric hardware
 - [x] ✅ Filesystem watcher adapter (`notify` crate) — emit events on file create/modify/delete for specified watch paths
@@ -86,8 +86,8 @@ fail or panic at runtime.
 - [x] ✅ `GET /v1/context/history?n=10` — last N snapshots (ring buffer, max 32)
 - [x] ✅ Versioned `/v1/` prefix with legacy unversioned routes retained for backward compat
 - [x] ✅ Add OpenAPI 3.0 spec (`openapi.yaml`) — hand-write or generate from Axum routes; keep in sync with route changes; publish at `GET /openapi.yaml`
-- [ ] 🟡 WebSocket subscribe filtering — clients send a JSON filter object on connect specifying device classes or intent categories; server only pushes matching events; avoids forcing clients to filter client-side
-- [ ] 🟢 Server-Sent Events (SSE) alternative at `GET /v1/stream/sse` — for HTTP-only clients that cannot upgrade to WebSocket
+- [x] ✅ WebSocket subscribe filtering — clients send a JSON filter object on connect specifying device classes or intent categories; server only pushes matching events; avoids forcing clients to filter client-side
+- [x] ✅ Server-Sent Events (SSE) alternative at `GET /v1/context/subscribe` — for HTTP-only clients that cannot upgrade to WebSocket
 
 -----
 
@@ -103,19 +103,19 @@ fail or panic at runtime.
 
 ## 8. 🟢 Developer Experience
 
-- [ ] 🟢 Add `docker-compose.yml` — daemon + mock adapter + example consumer agent; useful for CI and onboarding
+- [x] ✅ Add `docker-compose.yml` — daemon + mock adapter + example consumer agent; useful for CI and onboarding
 - [x] ✅ Add integration test suite — spin up daemon in `VEYN_MOCK=true` mode, connect mock adapters, assert that `ContextSnapshot` values match expected intent strings after injecting known metric sequences
 - [x] ✅ Add `veyn doctor` CLI subcommand — checks prerequisites (Rust toolchain, OS permissions, BLE availability), token validity, device access; prints a structured pass/fail report
-- [ ] 🟢 Add minimal web UI at `GET /ui` — live context feed, connected devices list, log tail; plain HTML/JS served by the daemon itself, no framework dependency
+- [x] ✅ Add minimal web UI at `GET /` — live context feed, connected devices list, log tail; plain HTML/JS served by the daemon itself, no framework dependency (`veyn-core/src/api/dashboard.html`)
 
 -----
 
 ## 9. 🟢 AI Integration Prep
 
-- [ ] 🟢 Design and document the **Agent Handshake Protocol** — how an AI agent authenticates, declares its capability requirements, and subscribes to the appropriate context tier
-- [ ] 🟢 Add `GET /v1/context/subscribe` with declarative filter DSL — e.g. `{ "intents": ["idle", "stress_response"], "min_confidence": 0.7 }`; returns a filtered SSE or WebSocket stream
-- [ ] 🟢 Add `context_tier` config option: `raw` | `filtered` | `semantic` — tokens are minted with a tier ceiling; agents only receive data at or below their authorized tier
-- [ ] 🟢 Document recommended integration patterns for: Claude via `veyn-mcp`, local Ollama agents, OpenAI function calling
+- [x] ✅ Design and document the **Agent Handshake Protocol** — Bearer token auth + `tier:semantic` scope + SSE/WebSocket subscription with filter DSL
+- [x] ✅ Add `GET /v1/context/subscribe` with declarative filter DSL — `?intents=neutral,stress_response&min_confidence=0.7&source_class=ble`; returns filtered SSE stream
+- [x] ✅ Add `context_tier` config option: `raw` | `filtered` | `semantic` — tokens declare ceiling via `tier:<value>` scope; WebSocket enforces tier per-connection; configurable via `veyn.toml` and `VEYN_CONTEXT_TIER` env var
+- [x] ✅ Document recommended integration patterns for: Claude via `veyn-mcp` (`docs/integrations/claude-mcp.md`), local Ollama agents (`docs/integrations/ollama.md`), OpenAI function calling (`docs/integrations/openai-function-calling.md`)
 
 -----
 
@@ -158,7 +158,7 @@ bounded window so the output is a coherent multi-channel timeline.
   - `POST /v1/session/start` — body: `{ "label": string, "annotation": string? }` → returns `InteroSession`
   - `POST /v1/session/stop` — stops the active session; returns final `InteroSession` with `ended_at` set
   - `GET /v1/session/{id}` — returns full multi-channel event timeline for the session
-- [x] ✅ WebSocket session framing — when a session is active, the event stream wraps events in a `session_frame` envelope: `{ "session_id": uuid, "channel": device_id, "event": VeynEvent }` so clients can reconstruct aligned timelines
+- [x] ✅ WebSocket session framing — when a session is active, the event stream wraps events in a `session_frame` envelope: `{ "session_id": uuid, "channel": device_id, "event": VeynEvent }` so clients can reconstruct aligned timelines (implemented in `handle_socket`)
 - [x] ✅ Add MCP tools to `veyn-mcp`: `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`
 
 -----
@@ -186,7 +186,7 @@ alongside the physiological data.
 - [x] ✅ `GET /v1/session/{id}/replay` — returns all events for the session in chronological order at **full resolution** (bypasses `CompressionEngine`; reads directly from SQLite by `session_id`)
 - [x] ✅ `PATCH /v1/session/{id}` — update `label` or `annotation` after the session ends; useful for post-hoc labelling
 - [x] ✅ `GET /v1/sessions` — paginated list ordered by `started_at DESC`; response includes `{ id, label, annotation, started_at, ended_at, duration_ms, device_count, event_count }`
-- [x] ✅ `GET /v1/session/{id}/export?format=csv` — flat CSV with columns `timestamp_ms, device_id, metric, value, unit`
+- [x] ✅ `GET /v1/session/{id}/export?format=csv` — flat CSV export with columns `timestamp_ms, device_id, metric, value, unit`
 
 -----
 
@@ -218,7 +218,7 @@ population norms.
 - [x] ✅ `GET /v1/baseline/{device_id}/{metric}` — returns current `BaselineStats` including `sufficient` flag; clients must check `sufficient` before using delta values
 - [x] ✅ Attach `baseline_delta` map to `ContextSnapshot` — keyed by `"{device_id}/{metric}"`, value is the z-score `(current - mean) / stddev`; only populated for metrics where `sufficient = true`
 - [x] ✅ Guard: when `sufficient = false`, exclude the metric from z-score calculations and set `intent_confidence` floor to `0.4` in the `CompressionEngine`
-- [x] ✅ `GET /v1/baseline/{device_id}/{metric}/history?days=30` — time-series of daily mean values; used by Intero’s longitudinal trend view
+- [x] ✅ `GET /v1/baseline/{device_id}/{metric}/history?days=30` — time-series of daily mean values per UTC day; used by Intero’s longitudinal trend view
 
 -----
 

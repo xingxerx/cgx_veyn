@@ -14,6 +14,7 @@ use serde_json::json;
 use tracing::{info, warn};
 
 use crate::api::state::AppState;
+use crate::config::{parse_context_tier, ContextTier};
 
 // ── Token path ────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,15 @@ impl ScopedToken {
             Some(sources)
         }
     }
+
+    /// Returns the context tier ceiling for this token, if declared via a
+    /// `"tier:<raw|filtered|semantic>"` scope entry.
+    pub fn tier_ceiling(&self) -> Option<ContextTier> {
+        self.scopes
+            .iter()
+            .find_map(|s| s.strip_prefix("tier:"))
+            .map(parse_context_tier)
+    }
 }
 
 /// Token claim injected into request extensions after successful auth.
@@ -84,6 +94,8 @@ pub struct TokenClaim {
     pub allowed_sources: Option<Vec<String>>,
     #[allow(dead_code)]
     pub label: String,
+    /// Context tier ceiling declared on this token; None means daemon default applies.
+    pub tier_ceiling: Option<ContextTier>,
 }
 
 // ── Token load/create ─────────────────────────────────────────────────────────
@@ -237,6 +249,7 @@ pub async fn require_bearer(
             read_only: false,
             allowed_sources: None,
             label: "no-auth".to_string(),
+            tier_ceiling: None,
         });
         return next.run(req).await;
     }
@@ -254,6 +267,7 @@ pub async fn require_bearer(
             read_only: false,
             allowed_sources: None,
             label: "primary".to_string(),
+            tier_ceiling: None,
         });
         return next.run(req).await;
     }
@@ -285,6 +299,7 @@ pub async fn require_bearer(
                 read_only: entry.is_read_only(),
                 allowed_sources: entry.allowed_sources(),
                 label: entry.label.clone(),
+                tier_ceiling: entry.tier_ceiling(),
             });
             return next.run(req).await;
         }

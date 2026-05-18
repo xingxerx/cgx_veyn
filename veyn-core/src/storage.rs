@@ -220,3 +220,68 @@ pub fn load_baseline_samples(
     }
     Ok(values)
 }
+
+/// Return daily mean values for a (device_id, metric) pair over the last `days` days.
+/// Each entry is `(day_start_ms, mean_value)` in ascending chronological order.
+pub fn load_baseline_daily_history(
+    conn: &Connection,
+    device_id: &str,
+    metric: &str,
+    days: u32,
+) -> Result<Vec<(i64, f64)>> {
+    let cutoff = chrono::Utc::now().timestamp_millis() - (days as i64) * 24 * 60 * 60 * 1_000;
+    // Group by UTC day (integer division of ts by ms-per-day gives the day bucket).
+    let ms_per_day: i64 = 86_400_000;
+    let mut stmt = conn.prepare(
+        "SELECT (ts / ?4) * ?4 AS day_start, AVG(value) AS mean_value
+         FROM baseline_samples
+         WHERE device_id=?1 AND metric=?2 AND ts>=?3
+         GROUP BY day_start
+         ORDER BY day_start ASC",
+    )?;
+    let rows = stmt.query_map(params![device_id, metric, cutoff, ms_per_day], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Export all events for a session as a flat CSV string.
+/// Columns: timestamp_ms, device_id, metric, value, unit
+pub fn export_session_csv(conn: &Connection, session_id: &str) -> Result<String> {
+    let mut stmt = conn.prepare(
+        "SELECT ts, device_id, metric, value, unit
+         FROM events WHERE session_id=?1 ORDER BY ts ASC",
+    )?;
+    let rows = stmt.query_map(params![session_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, f64>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+
+    let mut csv = String::from("timestamp_ms,device_id,metric,value,unit\n");
+    for r in rows {
+        let (ts, device_id, metric, value, unit) = r?;
+        // Escape any commas or quotes in string fields.
+        let device_id = csv_field(&device_id);
+        let metric = csv_field(&metric);
+        let unit = csv_field(&unit);
+        csv.push_str(&format!("{ts},{device_id},{metric},{value},{unit}\n"));
+    }
+    Ok(csv)
+}
+
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}

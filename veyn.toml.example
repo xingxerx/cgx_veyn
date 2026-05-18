@@ -26,10 +26,16 @@ rate_limit_rps = 100
 
 # Scope-limited tokens are configured in ~/.local/share/veyn/tokens.json:
 # [
-#   { "token": "<hex>", "label": "my-agent", "scopes": ["read"] },
-#   { "token": "<hex>", "label": "midi-only", "scopes": ["source:midi"] }
+#   { "token": "<hex>", "label": "my-agent",   "scopes": ["read"] },
+#   { "token": "<hex>", "label": "midi-only",  "scopes": ["source:midi"] },
+#   { "token": "<hex>", "label": "ai-agent",   "scopes": ["read", "tier:semantic"] }
 # ]
-# Scope values: "read" (GET only), "source:<class>" (filter by adapter type)
+# Scope values:
+#   "read"               — GET/HEAD only; POST/PUT/DELETE are rejected
+#   "source:<class>"     — filter context to a specific adapter class
+#   "tier:raw"           — expose full VeynEvent stream (unfiltered)
+#   "tier:filtered"      — expose compression-filtered events only
+#   "tier:semantic"      — expose only ContextSnapshot; no raw events (AI agents)
 
 [adapters]
 # Emit synthetic biometric events (for development / CI)
@@ -75,6 +81,11 @@ timeout_secs = 30
 rules_path = "rules.toml"
 # Maximum number of context snapshots to keep in history
 context_history_size = 32
+# Default context tier exposed to authenticated clients.
+# raw      — full VeynEvent stream (all adapters)
+# filtered — compression-filtered events (delta + debounce applied)
+# semantic — ContextSnapshot only; no raw events (recommended for AI agents)
+context_tier = "semantic"
 
 # Per-metric temporal debounce (milliseconds).
 # Events arriving faster than this window are dropped.
