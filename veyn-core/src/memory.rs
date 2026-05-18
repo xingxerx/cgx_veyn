@@ -49,6 +49,16 @@ impl MemoryStore {
         query_memory(&conn, q)
     }
 
+    pub fn get(&self, id: &str) -> Result<Option<MemoryRecord>> {
+        let conn = self.db.lock().unwrap();
+        get_memory_by_id(&conn, id)
+    }
+
+    pub fn delete(&self, id: &str) -> Result<bool> {
+        let conn = self.db.lock().unwrap();
+        delete_memory_by_id(&conn, id)
+    }
+
     /// Collapse existing memory records within a time window into a single summary string.
     #[allow(dead_code)]
     pub fn summarize_window(&self, since_ms: i64, until_ms: i64) -> Result<String> {
@@ -91,6 +101,44 @@ pub fn write_memory(conn: &Connection, record: &MemoryRecord) -> Result<()> {
         ],
     )?;
     Ok(())
+}
+
+pub fn get_memory_by_id(conn: &Connection, id: &str) -> Result<Option<MemoryRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, timestamp_ms, session_id, kind, topic, summary,
+                intent_at_time, confidence_at_time, hrv_at_time, hr_at_time, context_snapshot
+         FROM veyn_memory
+         WHERE id = ?1",
+    )?;
+
+    let mut rows = stmt.query_map(params![id], |row| {
+        let kind_raw: String = row.get(3)?;
+        let ctx_raw: Option<String> = row.get(10)?;
+        Ok(MemoryRecord {
+            id: row.get(0)?,
+            timestamp_ms: row.get(1)?,
+            session_id: row.get(2)?,
+            kind: str_to_kind(&kind_raw),
+            topic: row.get(4)?,
+            summary: row.get(5)?,
+            intent_at_time: row.get(6)?,
+            confidence_at_time: row.get(7)?,
+            hrv_at_time: row.get(8)?,
+            hr_at_time: row.get(9)?,
+            context_snapshot: ctx_raw.and_then(|s| serde_json::from_str(&s).ok()),
+        })
+    })?;
+
+    if let Some(row) = rows.next() {
+        Ok(Some(row?))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_memory_by_id(conn: &Connection, id: &str) -> Result<bool> {
+    let rows_affected = conn.execute("DELETE FROM veyn_memory WHERE id = ?1", params![id])?;
+    Ok(rows_affected > 0)
 }
 
 pub fn query_memory(conn: &Connection, q: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
