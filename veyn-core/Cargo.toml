@@ -28,3 +28,11 @@ tower          = { version = "0.4", features = ["limit", "util"] }
 tokio-stream   = { version = "0.1", features = ["sync"] }
 governor       = { version = "0.6", default-features = false, features = ["std", "dashmap"] }
 rusqlite       = { version = "0.31", features = ["bundled"] }
+
+[dev-dependencies]
+veyn-schemas  = { path = "../veyn-schemas" }
+veyn-plugins  = { path = "../veyn-plugins" }
+serde_json    = { workspace = true }
+uuid          = { workspace = true }
+chrono        = { workspace = true }
+tempfile      = "3"

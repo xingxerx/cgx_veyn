@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 use veyn_adapters::{
     ble::BleAdapter, eeg::EegAdapter, healthkit::HealthKitAdapter, mock::MockAdapter, VeynAdapter,
 };
-use veyn_schemas::VeynEvent;
+use veyn_schemas::{DeviceState, VeynEvent};
 
 use api::state::{AppState, PluginInfo};
 
@@ -39,11 +39,46 @@ struct Cli {
     /// Disable token authentication (development only — do not use in production).
     #[arg(long, default_value_t = false)]
     no_auth: bool,
+
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum CliCommand {
+    /// Install a WASM plugin from the given path into the plugins directory.
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+    /// Check prerequisites and report daemon health.
+    Doctor,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum PluginAction {
+    /// Validate and install a plugin from a manifest directory or .toml file.
+    Install {
+        /// Path to the plugin directory (containing plugin.toml) or to the .toml manifest file.
+        path: String,
+        /// Destination plugins directory (default: value from config).
+        #[arg(long, value_name = "DIR")]
+        plugins_dir: Option<String>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Handle subcommands before starting the daemon.
+    if let Some(cmd) = cli.command {
+        let cfg = config::load(cli.config.as_deref(), cli.port, cli.no_auth)?;
+        return match cmd {
+            CliCommand::Plugin { action } => run_plugin_cmd(action, &cfg),
+            CliCommand::Doctor => run_doctor(&cfg),
+        };
+    }
 
     let cfg = config::load(cli.config.as_deref(), cli.port, cli.no_auth)?;
 
@@ -147,23 +182,28 @@ async fn main() -> Result<()> {
 
     // Mock adapter.
     if cfg.mock_mode {
-        spawn_adapter(MockAdapter, event_tx.clone());
+        spawn_adapter(MockAdapter, event_tx.clone(), state.clone());
     }
 
     // HealthKit TCP relay.
     spawn_adapter(
         HealthKitAdapter::new(cfg.healthkit_port, state.notification_tx.clone()),
         event_tx.clone(),
+        state.clone(),
     );
 
     // BLE adapter.
     if cfg.ble_enabled {
-        spawn_adapter(BleAdapter, event_tx.clone());
+        spawn_adapter(BleAdapter, event_tx.clone(), state.clone());
     }
 
     // EEG/OSC adapter.
     if cfg.eeg_enabled {
-        spawn_adapter(EegAdapter::new(cfg.osc_port), event_tx.clone());
+        spawn_adapter(
+            EegAdapter::new(cfg.osc_port),
+            event_tx.clone(),
+            state.clone(),
+        );
     }
 
     // Platform-specific adapters.
@@ -173,19 +213,25 @@ async fn main() -> Result<()> {
             spawn_adapter(
                 veyn_adapters::evdev_adapter::EvdevAdapter::new(),
                 event_tx.clone(),
+                state.clone(),
             );
         }
         if cfg.hidraw_enabled {
             spawn_adapter(
                 veyn_adapters::hidraw::HidrawAdapter::new(),
                 event_tx.clone(),
+                state.clone(),
             );
         }
     }
 
     // MIDI adapter.
     if cfg.midi_enabled {
-        spawn_adapter(veyn_adapters::midi::MidiAdapter::new(), event_tx.clone());
+        spawn_adapter(
+            veyn_adapters::midi::MidiAdapter::new(),
+            event_tx.clone(),
+            state.clone(),
+        );
     }
 
     // Serial adapter.
@@ -193,6 +239,7 @@ async fn main() -> Result<()> {
         spawn_adapter(
             veyn_adapters::serial_adapter::SerialAdapter::new(serial_port.clone(), cfg.serial_baud),
             event_tx.clone(),
+            state.clone(),
         );
     }
 
@@ -201,6 +248,7 @@ async fn main() -> Result<()> {
         spawn_adapter(
             veyn_adapters::fs_watcher::FsWatcherAdapter::new(cfg.fs_watch_paths.clone()),
             event_tx.clone(),
+            state.clone(),
         );
     }
 
@@ -215,7 +263,7 @@ async fn main() -> Result<()> {
             version: plugin.manifest.plugin.version.clone(),
             description: plugin.manifest.plugin.description.clone(),
         });
-        spawn_adapter(plugin, event_tx.clone());
+        spawn_adapter(plugin, event_tx.clone(), state.clone());
     }
 
     // Smart home MQTT bridge.
@@ -250,9 +298,159 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn run_plugin_cmd(action: PluginAction, cfg: &config::Config) -> Result<()> {
+    match action {
+        PluginAction::Install { path, plugins_dir } => {
+            use std::path::Path;
+
+            let src = Path::new(&path);
+            let manifest_path = if src.is_dir() {
+                src.join("plugin.toml")
+            } else {
+                src.to_path_buf()
+            };
+
+            if !manifest_path.exists() {
+                anyhow::bail!("manifest not found: {:?}", manifest_path);
+            }
+
+            let manifest = veyn_plugins::load_manifest(&manifest_path)?;
+
+            if !manifest.wasm_path.exists() {
+                anyhow::bail!("wasm binary not found: {:?}", manifest.wasm_path);
+            }
+
+            let sha = veyn_plugins::sha256_file(&manifest.wasm_path)?;
+            println!(
+                "plugin: {}  v{}",
+                manifest.plugin.name, manifest.plugin.version
+            );
+            println!("wasm:   {:?}", manifest.wasm_path);
+            println!("sha256: {}", sha);
+
+            if let Some(ref declared) = manifest.signature.sha256 {
+                if declared.to_lowercase() != sha {
+                    anyhow::bail!(
+                        "signature mismatch — declared {} but computed {}",
+                        declared,
+                        sha
+                    );
+                }
+                println!("signature: OK");
+            } else {
+                println!("signature: none declared (unsigned)");
+            }
+
+            let dest_dir = plugins_dir.as_deref().unwrap_or(&cfg.plugins_dir);
+            std::fs::create_dir_all(dest_dir)?;
+            let plugin_dir = Path::new(dest_dir).join(&manifest.plugin.name);
+            std::fs::create_dir_all(&plugin_dir)?;
+
+            let dest_toml = plugin_dir.join("plugin.toml");
+            let dest_wasm = plugin_dir.join(
+                manifest
+                    .wasm_path
+                    .file_name()
+                    .unwrap_or_else(|| std::ffi::OsStr::new("plugin.wasm")),
+            );
+
+            std::fs::copy(&manifest_path, &dest_toml)?;
+            std::fs::copy(&manifest.wasm_path, &dest_wasm)?;
+
+            println!("installed → {:?}", plugin_dir);
+            Ok(())
+        }
+    }
+}
+
+fn run_doctor(cfg: &config::Config) -> Result<()> {
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+
+    macro_rules! check {
+        ($label:expr, $ok:expr, $msg:expr) => {{
+            if $ok {
+                println!("[PASS] {}", $label);
+                passed += 1;
+            } else {
+                println!("[FAIL] {} — {}", $label, $msg);
+                failed += 1;
+            }
+        }};
+    }
+
+    // Token file
+    let token_path = auth::token_path();
+    let token_ok = token_path.exists();
+    check!(
+        "auth token",
+        token_ok,
+        format!("not found at {:?}", token_path)
+    );
+
+    // Plugins directory
+    let plugins_exists = std::path::Path::new(&cfg.plugins_dir).exists();
+    check!(
+        "plugins directory",
+        plugins_exists,
+        format!("{:?} does not exist", cfg.plugins_dir)
+    );
+
+    // SQLite writeable
+    let db_dir = std::path::Path::new(&cfg.db_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let db_writable = db_dir.exists();
+    check!(
+        "database directory",
+        db_writable,
+        format!("{:?} is not accessible", db_dir)
+    );
+
+    // Rust version (informational)
+    let rustc = std::process::Command::new("rustc")
+        .arg("--version")
+        .output();
+    check!("rustc available", rustc.is_ok(), "rustc not found in PATH");
+
+    // BLE availability (Linux: check if bluetoothd is running)
+    #[cfg(target_os = "linux")]
+    {
+        let bt = std::process::Command::new("bluetoothctl")
+            .arg("show")
+            .output();
+        let bt_ok = bt.map(|o| o.status.success()).unwrap_or(false);
+        check!(
+            "bluetooth available",
+            bt_ok,
+            "bluetoothctl show failed — BLE may not work"
+        );
+    }
+
+    // evdev access (Linux)
+    #[cfg(target_os = "linux")]
+    {
+        let evdev_ok = std::path::Path::new("/dev/input").exists();
+        check!("evdev /dev/input", evdev_ok, "/dev/input not found");
+    }
+
+    println!();
+    println!("result: {} passed, {} failed", passed, failed);
+
+    if failed > 0 {
+        anyhow::bail!("{} check(s) failed", failed);
+    }
+    Ok(())
+}
+
 /// Spawn an adapter with automatic hot-plug retry using exponential backoff.
-/// The adapter restarts on error; a clean `Ok(())` exit stops the loop.
-fn spawn_adapter<A: VeynAdapter + 'static>(adapter: A, tx: mpsc::Sender<VeynEvent>) {
+/// On error, marks all devices owned by this adapter as Disconnected in the
+/// device registry, then waits and retries. A clean `Ok(())` exit stops the loop.
+fn spawn_adapter<A: VeynAdapter + 'static>(
+    adapter: A,
+    tx: mpsc::Sender<VeynEvent>,
+    state: api::state::AppState,
+) {
     let name = adapter.name().to_owned();
     tokio::spawn(async move {
         let mut delay = Duration::from_secs(1);
@@ -269,6 +467,15 @@ fn spawn_adapter<A: VeynAdapter + 'static>(adapter: A, tx: mpsc::Sender<VeynEven
                         "adapter error — retrying: {}",
                         e
                     );
+                    // Mark all devices owned by this adapter as Disconnected.
+                    {
+                        let mut devices = state.devices.lock().unwrap();
+                        for dev in devices.values_mut() {
+                            if dev.source == name {
+                                dev.state = DeviceState::Disconnected;
+                            }
+                        }
+                    }
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(Duration::from_secs(60));
                 }

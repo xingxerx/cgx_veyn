@@ -3,7 +3,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         Html, IntoResponse, Json,
@@ -38,7 +38,9 @@ pub fn router(state: AppState) -> Router {
         .route("/stream", get(ws_stream))
         .route("/notify", post(notify_post))
         .route("/presence", get(presence_get))
-        .route("/gestures/recent", get(gestures_recent));
+        .route("/gestures/recent", get(gestures_recent))
+        .route("/metrics", get(prometheus_metrics))
+        .route("/openapi.yaml", get(openapi_spec));
 
     // Versioned /v1/ routes.
     let v1 = Router::new()
@@ -782,4 +784,50 @@ async fn gestures_recent(State(state): State<AppState>) -> Json<serde_json::Valu
         .collect();
     let count = gestures.len();
     Json(json!({ "gestures": gestures, "count": count }))
+}
+
+// ── GET /metrics  (Prometheus text/plain) ──────────────────────────────────────
+
+async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let raw = state.raw_event_count.load(Ordering::Relaxed);
+    let passed = state.event_count.load(Ordering::Relaxed);
+    let ratio = *state.compression_ratio.lock().unwrap();
+    let devices = state.devices.lock().unwrap().len();
+    let uptime = state.start_time.elapsed().as_secs();
+    let text = format!(
+        "# HELP veyn_events_raw_total Total raw events received\n\
+         # TYPE veyn_events_raw_total counter\n\
+         veyn_events_raw_total {raw}\n\
+         # HELP veyn_events_passed_total Events passed after compression\n\
+         # TYPE veyn_events_passed_total counter\n\
+         veyn_events_passed_total {passed}\n\
+         # HELP veyn_compression_ratio Current compression ratio\n\
+         # TYPE veyn_compression_ratio gauge\n\
+         veyn_compression_ratio {ratio:.4}\n\
+         # HELP veyn_active_devices Number of active devices\n\
+         # TYPE veyn_active_devices gauge\n\
+         veyn_active_devices {devices}\n\
+         # HELP veyn_uptime_seconds Daemon uptime in seconds\n\
+         # TYPE veyn_uptime_seconds counter\n\
+         veyn_uptime_seconds {uptime}\n"
+    );
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        text,
+    )
+}
+
+// ── GET /openapi.yaml ──────────────────────────────────────────────────────────
+
+async fn openapi_spec() -> impl IntoResponse {
+    const SPEC: &str = include_str!("../../../openapi.yaml");
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/yaml")],
+        SPEC,
+    )
 }
