@@ -255,13 +255,15 @@ async fn context_subscribe(
 
                 // Apply source class filter from query params.
                 if !source_filter.is_empty() {
-                    snapshot.state_deltas
+                    snapshot
+                        .state_deltas
                         .retain(|d| source_filter.iter().any(|s| s == &d.source_class));
                 }
 
                 // Apply source class filter from token scope.
                 if let Some(ref allowed) = allowed_sources_token {
-                    snapshot.state_deltas
+                    snapshot
+                        .state_deltas
                         .retain(|d| allowed.iter().any(|s| s == &d.source_class));
                 }
 

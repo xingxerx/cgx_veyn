@@ -56,7 +56,10 @@ fn run_serial_loop(port_name: &str, baud_rate: u32, tx: mpsc::Sender<VeynEvent>)
 
     info!(port = %port_name, baud = baud_rate, "serial adapter connected");
 
-    let device_id = format!("serial:{}", port_name.trim_start_matches('/').replace('/', "_"));
+    let device_id = format!(
+        "serial:{}",
+        port_name.trim_start_matches('/').replace('/', "_")
+    );
     let reader = BufReader::new(port);
 
     for line_result in reader.lines() {

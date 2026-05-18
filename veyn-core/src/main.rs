@@ -124,10 +124,16 @@ async fn main() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         if cfg.evdev_enabled {
-            spawn_adapter(veyn_adapters::evdev_adapter::EvdevAdapter::new(), event_tx.clone());
+            spawn_adapter(
+                veyn_adapters::evdev_adapter::EvdevAdapter::new(),
+                event_tx.clone(),
+            );
         }
         if cfg.hidraw_enabled {
-            spawn_adapter(veyn_adapters::hidraw::HidrawAdapter::new(), event_tx.clone());
+            spawn_adapter(
+                veyn_adapters::hidraw::HidrawAdapter::new(),
+                event_tx.clone(),
+            );
         }
     }
 
@@ -139,10 +145,7 @@ async fn main() -> Result<()> {
     // Serial adapter.
     if let Some(ref serial_port) = cfg.serial_port {
         spawn_adapter(
-            veyn_adapters::serial_adapter::SerialAdapter::new(
-                serial_port.clone(),
-                cfg.serial_baud,
-            ),
+            veyn_adapters::serial_adapter::SerialAdapter::new(serial_port.clone(), cfg.serial_baud),
             event_tx.clone(),
         );
     }

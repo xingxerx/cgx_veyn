@@ -81,7 +81,10 @@ fn run_watcher(paths: Vec<String>, tx: mpsc::Sender<VeynEvent>) -> Result<()> {
             let path_str = path.to_string_lossy().to_string();
             let event = VeynEvent::new("fs:watcher", "fs", "fs_event", metric_value, "")
                 .with_meta("path", serde_json::Value::String(path_str))
-                .with_meta("event_kind", serde_json::Value::String(kind_str.to_string()));
+                .with_meta(
+                    "event_kind",
+                    serde_json::Value::String(kind_str.to_string()),
+                );
 
             if tx.blocking_send(event).is_err() {
                 return Ok(());

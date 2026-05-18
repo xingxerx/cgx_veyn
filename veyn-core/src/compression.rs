@@ -178,8 +178,14 @@ mod tests {
 
     fn make_engine() -> CompressionEngine {
         // Set debounce to 0 so tests are deterministic without sleeps.
-        let debounce = [("heart_rate", 0u64)].into_iter().map(|(k, v)| (k.to_string(), v)).collect();
-        let epsilons = [("heart_rate", 1.0f64)].into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        let debounce = [("heart_rate", 0u64)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        let epsilons = [("heart_rate", 1.0f64)]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
         CompressionEngine::new("/nonexistent/rules.toml".to_string(), debounce, epsilons)
     }
 

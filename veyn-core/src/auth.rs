@@ -406,9 +406,7 @@ mod tests {
     #[test]
     fn extract_token_missing_returns_none() {
         use axum::http::Request;
-        let req = Request::builder()
-            .body(axum::body::Body::empty())
-            .unwrap();
+        let req = Request::builder().body(axum::body::Body::empty()).unwrap();
         assert_eq!(extract_token(&req), None);
     }
 }
