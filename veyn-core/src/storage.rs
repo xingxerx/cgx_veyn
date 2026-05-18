@@ -229,8 +229,7 @@ pub fn load_baseline_daily_history(
     metric: &str,
     days: u32,
 ) -> Result<Vec<(i64, f64)>> {
-    let cutoff =
-        chrono::Utc::now().timestamp_millis() - (days as i64) * 24 * 60 * 60 * 1_000;
+    let cutoff = chrono::Utc::now().timestamp_millis() - (days as i64) * 24 * 60 * 60 * 1_000;
     // Group by UTC day (integer division of ts by ms-per-day gives the day bucket).
     let ms_per_day: i64 = 86_400_000;
     let mut stmt = conn.prepare(
