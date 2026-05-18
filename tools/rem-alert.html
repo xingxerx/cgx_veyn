@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="REM Alert">
+  <title>VEYN REM Alert</title>
+  <style>
+    :root {
+      --bg:     #080808;
+      --card:   #131313;
+      --border: #252525;
+      --fg:     #e8e8e8;
+      --muted:  #505050;
+      --amber:  #ff9500;
+      --green:  #30d158;
+      --red:    #ff453a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, "Helvetica Neue", sans-serif;
+      font-size: 16px;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      padding: 28px 20px 40px;
+      gap: 18px;
+    }
+
+    /* ── Flash overlay ───────────────────────────────────────────────────── */
+    #flash {
+      position: fixed;
+      inset: 0;
+      background: var(--amber);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #flash.on { animation: pulse 4s ease-out forwards; }
+    @keyframes pulse {
+      0%   { opacity: 0.92; }
+      20%  { opacity: 0.6;  }
+      40%  { opacity: 0.85; }
+      65%  { opacity: 0.4;  }
+      100% { opacity: 0;    }
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    .header { display: flex; align-items: baseline; gap: 10px; }
+    .header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.4px; }
+    .header .sub { font-size: 12px; color: var(--muted); }
+
+    /* ── Alert banner ────────────────────────────────────────────────────── */
+    #banner {
+      display: none;
+      background: var(--amber);
+      color: #000;
+      border-radius: 12px;
+      padding: 16px 18px;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: -0.2px;
+    }
+    #banner.show { display: block; }
+
+    /* ── Cards ───────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+    }
+
+    /* ── Inputs ──────────────────────────────────────────────────────────── */
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field label { font-size: 12px; color: var(--muted); }
+    input[type="url"], input[type="password"], input[type="text"] {
+      background: #1c1c1c;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--fg);
+      font-size: 14px;
+      font-family: "SF Mono", "Courier New", monospace;
+      padding: 10px 12px;
+      width: 100%;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    input:focus { border-color: var(--amber); }
+
+    /* ── Buttons ─────────────────────────────────────────────────────────── */
+    button {
+      border: none;
+      border-radius: 11px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 14px;
+      width: 100%;
+      -webkit-appearance: none;
+    }
+    button:active { opacity: 0.75; }
+    button:disabled { opacity: 0.35; }
+    .btn-start { background: var(--amber); color: #000; }
+    .btn-stop  { background: var(--card);  color: var(--fg); border: 1px solid var(--border); }
+    .btn-test  { background: var(--card);  color: var(--muted); border: 1px solid var(--border); font-size: 14px; padding: 11px; }
+    .btn-notif { background: var(--card);  color: var(--fg); border: 1px solid var(--border); font-size: 14px; padding: 11px; }
+
+    /* ── Status ──────────────────────────────────────────────────────────── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    .dot-wrap { display: flex; align-items: center; gap: 7px; }
+    .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .grey  { background: var(--muted); }
+    .green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+    .red   { background: var(--red);   box-shadow: 0 0 6px var(--red);   }
+    #lastCheck { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    #sessionLine { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Watch hint ──────────────────────────────────────────────────────── */
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .hint strong { color: var(--fg); }
+
+    /* ── Footer ──────────────────────────────────────────────────────────── */
+    footer {
+      margin-top: auto;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.7;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="flash"></div>
+
+<div class="header">
+  <h1>REM Alert</h1>
+  <span class="sub">via VEYN</span>
+</div>
+
+<div id="banner">REM detected — lucid window open</div>
+
+<!-- ── Config ──────────────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-label">Connection</div>
+  <div class="field">
+    <label for="hostIn">VEYN host (your PC's local IP)</label>
+    <input id="hostIn" type="url" placeholder="http://192.168.1.x:7700"
+           autocorrect="off" autocapitalize="none" spellcheck="false">
+  </div>
+  <div class="field">
+    <label for="tokenIn">Bearer token</label>
+    <input id="tokenIn" type="password" placeholder="paste token"
+           autocorrect="off" autocapitalize="none" spellcheck="false">
+  </div>
+</div>
+
+<!-- ── Controls ────────────────────────────────────────────────────────────── -->
+<button id="mainBtn" class="btn-start" onclick="toggle()">Start Monitoring</button>
+<button class="btn-test" onclick="testAlert()">Test Alert</button>
+
+<!-- ── Status ──────────────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-label">Status</div>
+  <div class="status-row">
+    <div class="dot-wrap">
+      <div class="dot grey" id="dot"></div>
+      <span id="connLabel">Not connected</span>
+    </div>
+    <span id="lastCheck"></span>
+  </div>
+  <div id="sessionLine">—</div>
+</div>
+
+<!-- ── Watch haptic ────────────────────────────────────────────────────────── -->
+<div class="card" id="watchCard">
+  <div class="card-label">Apple Watch Haptic</div>
+  <p class="hint">
+    <strong>How it works:</strong> this page fires a Web Notification when REM
+    is detected. iPhone mirrors it to your Watch as a haptic tap.<br><br>
+    <strong>Requires:</strong> tap the button below, then
+    <strong>Add to Home Screen</strong> (Share icon → Add to Home Screen)
+    and open from there. iOS 16.4+ only.
+  </p>
+  <button class="btn-notif" id="notifBtn" onclick="askNotif()">
+    Enable Notifications
+  </button>
+</div>
+
+<footer>
+  Keep Auto-Lock off during sleep sessions.<br>
+  Screen face down is fine — audio and haptic fire regardless.
+</footer>
+
+<script>
+// ── Persisted config ──────────────────────────────────────────────────────────
+
+const hostIn  = document.getElementById('hostIn');
+const tokenIn = document.getElementById('tokenIn');
+
+hostIn.value  = localStorage.getItem('veyn_host')  || '';
+tokenIn.value = localStorage.getItem('veyn_token') || '';
+
+hostIn.addEventListener('blur',  () => localStorage.setItem('veyn_host',  hostIn.value.trim()));
+tokenIn.addEventListener('blur', () => localStorage.setItem('veyn_token', tokenIn.value.trim()));
+
+// ── Audio context (must be created on first user gesture) ─────────────────────
+
+let audioCtx = null;
+
+function unlockAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // Resume in case it was suspended by the browser.
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+// ── Runtime state ─────────────────────────────────────────────────────────────
+
+let active        = false;
+let pollId        = null;
+let sseCtrl       = null;
+let lastSessionId = null;
+let alertLocked   = false;   // prevent double-fire within same session
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+
+const dot        = document.getElementById('dot');
+const connLabel  = document.getElementById('connLabel');
+const lastCheck  = document.getElementById('lastCheck');
+const sessionLine = document.getElementById('sessionLine');
+const mainBtn    = document.getElementById('mainBtn');
+const banner     = document.getElementById('banner');
+
+function setDot(state) {           // 'grey' | 'green' | 'amber' | 'red'
+  dot.className = 'dot ' + state;
+}
+function setConn(label)   { connLabel.textContent  = label; }
+function setSession(text) { sessionLine.textContent = text; }
+function setCheck(time)   { lastCheck.textContent   = time; }
+
+// ── Start / Stop ──────────────────────────────────────────────────────────────
+
+function toggle() {
+  unlockAudio();
+  active ? stop() : start();
+}
+
+function start() {
+  const host  = hostIn.value.trim();
+  const token = tokenIn.value.trim();
+  if (!host || !token) { alert('Enter a host and token first.'); return; }
+  localStorage.setItem('veyn_host',  host);
+  localStorage.setItem('veyn_token', token);
+
+  active        = true;
+  lastSessionId = null;
+  alertLocked   = false;
+
+  mainBtn.textContent = 'Stop Monitoring';
+  mainBtn.className   = 'btn-stop';
+  banner.classList.remove('show');
+  setDot('amber');
+  setConn('Connecting…');
+  setSession('Waiting for REM detection…');
+
+  sseConnect(host, token);
+  doPoll(host, token);
+  pollId = setInterval(() => doPoll(host, token), 3000);
+}
+
+function stop() {
+  active = false;
+  clearInterval(pollId); pollId = null;
+  if (sseCtrl) { sseCtrl.abort(); sseCtrl = null; }
+
+  mainBtn.textContent = 'Start Monitoring';
+  mainBtn.className   = 'btn-start';
+  setDot('grey');
+  setConn('Not connected');
+  setSession('—');
+  setCheck('');
+}
+
+// ── Health poll — primary trigger detection ───────────────────────────────────
+
+async function doPoll(host, token) {
+  if (!active) return;
+  try {
+    const r = await fetch(`${host}/v1/health`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal:  AbortSignal.timeout(4000),
+    });
+    if (!r.ok) { setDot('red'); setConn('Auth error'); return; }
+
+    const h   = await r.json();
+    const sid = h.recording_session_id ?? null;
+
+    setDot('green');
+    setConn('Connected');
+    setCheck(new Date().toLocaleTimeString());
+
+    if (sid && sid !== lastSessionId) {
+      lastSessionId = sid;
+      await verifySession(host, token, sid);
+    } else if (!sid && lastSessionId) {
+      // Session closed — arm for next trigger.
+      lastSessionId = null;
+      alertLocked   = false;
+      setSession('Session ended — watching for next REM…');
+    }
+  } catch {
+    setDot('amber');
+    setConn('Retrying…');
+  }
+}
+
+// Fetch /v1/session/:id and fire if label === "rem_trigger".
+async function verifySession(host, token, id) {
+  if (alertLocked) return;
+  try {
+    const r = await fetch(`${host}/v1/session/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal:  AbortSignal.timeout(4000),
+    });
+    if (!r.ok) return;
+    const s = await r.json();
+    setSession(`Session "${s.label}" (${id.slice(0,8)}…)`);
+    if (s.label === 'rem_trigger') fireAlert();
+  } catch { /* silent — poll will retry */ }
+}
+
+// ── SSE — supplementary, catches recording_session_id in ContextSnapshots ─────
+
+async function sseConnect(host, token) {
+  if (sseCtrl) sseCtrl.abort();
+  sseCtrl = new AbortController();
+
+  try {
+    const r = await fetch(`${host}/v1/context/subscribe`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal:  sseCtrl.signal,
+    });
+    if (!r.ok || !r.body) return;
+
+    const reader  = r.body.getReader();
+    const dec     = new TextDecoder();
+    let   buf     = '';
+    let   evType  = '';
+    let   evData  = '';
+
+    while (active) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop(); // keep partial last line
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          evType = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          evData = line.slice(5).trim();
+        } else if (line === '' && evData) {
+          if (evType === 'context') {
+            try {
+              const snap = JSON.parse(evData);
+              const sid  = snap.recording_session_id;
+              if (sid && sid !== lastSessionId) {
+                lastSessionId = sid;
+                const h = hostIn.value.trim();
+                const t = tokenIn.value.trim();
+                await verifySession(h, t, sid);
+              }
+            } catch { /* malformed JSON, skip */ }
+          }
+          evType = '';
+          evData = '';
+        }
+      }
+    }
+  } catch (e) {
+    if (!active) return;
+    // Reconnect after 5 s on unexpected drop.
+    setTimeout(() => {
+      if (active) sseConnect(hostIn.value.trim(), tokenIn.value.trim());
+    }, 5000);
+  }
+}
+
+// ── Alert ─────────────────────────────────────────────────────────────────────
+
+function fireAlert() {
+  alertLocked = true;
+  setSession('⚡ REM DETECTED — alert fired');
+
+  flash();
+  beep();
+  notify();
+
+  banner.classList.add('show');
+  setTimeout(() => banner.classList.remove('show'), 15000);
+}
+
+function flash() {
+  const el = document.getElementById('flash');
+  el.classList.remove('on');
+  void el.offsetWidth; // force reflow so animation restarts
+  el.classList.add('on');
+  el.addEventListener('animationend', () => el.classList.remove('on'), { once: true });
+}
+
+function beep() {
+  if (!audioCtx) return;
+  // Four ascending sine tones — gentle but distinct.
+  const seq = [
+    { freq: 432, start: 0.00, dur: 0.35 },
+    { freq: 528, start: 0.40, dur: 0.35 },
+    { freq: 639, start: 0.80, dur: 0.35 },
+    { freq: 528, start: 1.25, dur: 0.55 },
+  ];
+  const now = audioCtx.currentTime;
+  seq.forEach(({ freq, start, dur }) => {
+    const osc  = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.type            = 'sine';
+    osc.frequency.value = freq;
+    const t0 = now + start;
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(0.38, t0 + 0.05);
+    gain.gain.linearRampToValueAtTime(0,    t0 + dur);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
+  });
+}
+
+function notify() {
+  if (Notification.permission !== 'granted') return;
+  // Fires on iPhone → mirrors to Apple Watch as a haptic tap.
+  try {
+    new Notification('REM detected', {
+      body:      'Lucid window is open.',
+      tag:       'veyn-rem',
+      renotify:  true,
+    });
+  } catch { /* PWA not installed or HTTPS not available */ }
+}
+
+// ── Test ──────────────────────────────────────────────────────────────────────
+
+function testAlert() {
+  unlockAudio();
+  alertLocked = false;
+  fireAlert();
+}
+
+// ── Notification permission ───────────────────────────────────────────────────
+
+function askNotif() {
+  if (!('Notification' in window)) {
+    alert('Notifications are not available in this browser.\nInstall as a PWA (Add to Home Screen) and reopen from there.');
+    return;
+  }
+  Notification.requestPermission().then(p => {
+    updateNotifUI(p);
+    if (p === 'granted') {
+      alert('Notifications enabled.\nNotifications fired here will also trigger a haptic on your Apple Watch.');
+    } else {
+      alert('Permission denied. You can re-enable in Settings → Safari → Notifications.');
+    }
+  });
+}
+
+function updateNotifUI(permission) {
+  const card = document.getElementById('watchCard');
+  const btn  = document.getElementById('notifBtn');
+  if (permission === 'granted') {
+    btn.textContent = 'Notifications enabled';
+    btn.disabled    = true;
+  } else if (permission === 'denied') {
+    btn.textContent = 'Notifications blocked (check Settings)';
+    btn.disabled    = true;
+  }
+  // Hide the card entirely if the API is missing (old iOS / non-PWA context).
+  if (!('Notification' in window)) card.style.display = 'none';
+}
+
+// Init notification UI state.
+if ('Notification' in window) {
+  updateNotifUI(Notification.permission);
+} else {
+  document.getElementById('watchCard').style.display = 'none';
+}
+</script>
+</body>
+</html>
