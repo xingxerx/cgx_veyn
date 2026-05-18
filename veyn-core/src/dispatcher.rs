@@ -61,10 +61,14 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
             }
         }
 
-        // Update baseline with this sample.
+        // Update baseline and temporal windows with this sample.
         {
             let mut baseline = state.baseline_engine.lock().unwrap();
             baseline.update(&event.device_id, &event.metric, event.value);
+        }
+        {
+            let mut temporal = state.temporal_engine.lock().unwrap();
+            temporal.push(&event.metric, event.ts, event.value);
         }
 
         // Persist event to SQLite if a session is open.
@@ -132,6 +136,8 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
             Some(z_scores)
         };
 
+        let temporal_patterns = state.temporal_engine.lock().unwrap().get_patterns();
+
         let snapshot = ContextSnapshot {
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
             session_id: (*state.session_id).clone(),
@@ -143,6 +149,7 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
             state_deltas: deltas,
             baseline_delta,
             recording_session_id: recording_session_id.map(|a| (*a).clone()),
+            temporal_patterns,
         };
 
         state.update_context(snapshot);

@@ -189,6 +189,11 @@ impl CompressionEngine {
 // ── Intero z-score classification ─────────────────────────────────────────────
 
 /// Classify intent from physiological z-scores relative to personal baseline.
+///
+/// Uses multi-signal fusion: the core two-signal condition (HR + HRV) anchors
+/// each state; every additional confirming signal (EEG bands, SpO2, RR) adds
+/// a +0.05 confidence bonus, capped at the per-state ceiling.
+///
 /// Returns None if no pattern is confidently matched.
 fn classify_intero(
     _state: &HashMap<String, f64>,
@@ -198,61 +203,102 @@ fn classify_intero(
     let hrv_z = z.get("hrv").copied();
     let rr_z = z.get("respiratory_rate").copied();
     let spo2_z = z.get("spo2").copied();
+    // EEG frequency band z-scores from the EEG/OSC adapter (Mind Monitor metrics).
+    let beta_z = z.get("eeg_beta").copied();
+    let alpha_z = z.get("eeg_alpha").copied();
+    let theta_z = z.get("eeg_theta").copied();
 
-    // StressResponse: elevated HR z-score AND suppressed HRV z-score.
+    // +5 % per confirming signal beyond the anchor pair (HR + HRV).
+    let bonus = |extra: u32| -> f64 { extra as f64 * 0.05 };
+
+    // StressResponse: HR↑↑ + HRV↓↓ — optional EEG beta↑ and/or RR↑ confirm.
     if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
         if hr > 1.5 && hrv < -1.0 {
-            let confidence = (((hr - 1.5) + hrv.abs()) / 6.0).clamp(0.55, 0.95) as f32;
-            return Some((
-                "stress_response".to_string(),
-                IntentCode::StressResponse,
-                confidence,
-            ));
+            let mut extra: u32 = 0;
+            if beta_z.is_some_and(|b| b > 1.0) {
+                extra += 1;
+            }
+            if rr_z.is_some_and(|r| r > 0.5) {
+                extra += 1;
+            }
+            if spo2_z.is_some_and(|s| s < -0.5) {
+                extra += 1;
+            }
+            let base = ((hr - 1.5) + hrv.abs()) / 6.0;
+            let conf = (base + bonus(extra)).clamp(0.55, 0.95) as f32;
+            return Some(("stress_response".to_string(), IntentCode::StressResponse, conf));
         }
     }
 
-    // CognitiveLoad: mildly elevated HR, suppressed HRV, normal or elevated RR.
+    // CognitiveLoad: HR↑ (mild) + HRV↓ — EEG beta↑ and/or theta↑ (focused effort) confirm.
     if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
         if (0.5..1.5).contains(&hr) && hrv < -0.5 {
             let rr_ok = rr_z.map(|r| r > -1.0).unwrap_or(true);
             if rr_ok {
-                return Some((
-                    "cognitive_load".to_string(),
-                    IntentCode::CognitiveLoad,
-                    0.65,
-                ));
+                let mut extra: u32 = 0;
+                if beta_z.is_some_and(|b| b > 0.5) {
+                    extra += 1;
+                }
+                if theta_z.is_some_and(|t| t > 0.5) {
+                    extra += 1;
+                }
+                let conf = (0.65 + bonus(extra)).clamp(0.5, 0.92) as f32;
+                return Some(("cognitive_load".to_string(), IntentCode::CognitiveLoad, conf));
             }
         }
     }
 
-    // Fatigue: below-baseline HR, suppressed HRV, SpO2 normal or suppressed.
+    // Fatigue: HR↓ + HRV↓ — EEG beta↓ (low arousal) and/or alpha↑ (drowsy) confirm.
     if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
         if hr < -0.5 && hrv < -0.5 {
             let spo2_ok = spo2_z.map(|s| s > -1.0).unwrap_or(true);
             if spo2_ok {
-                return Some(("fatigue".to_string(), IntentCode::Fatigue, 0.65));
+                let mut extra: u32 = 0;
+                if beta_z.is_some_and(|b| b < -0.5) {
+                    extra += 1;
+                }
+                if alpha_z.is_some_and(|a| a > 0.5) {
+                    extra += 1;
+                }
+                let conf = (0.65 + bonus(extra)).clamp(0.5, 0.90) as f32;
+                return Some(("fatigue".to_string(), IntentCode::Fatigue, conf));
             }
         }
     }
 
-    // Recovery: HR and HRV trending toward baseline after stress.
+    // Recovery: HR near-baseline + HRV↑ — EEG alpha↑ (relaxation) confirms.
     if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
         if (-0.5..0.5).contains(&hr) && hrv > 0.5 {
-            return Some(("recovery".to_string(), IntentCode::Recovery, 0.6));
+            let mut extra: u32 = 0;
+            if alpha_z.is_some_and(|a| a > 0.5) {
+                extra += 1;
+            }
+            let conf = (0.60 + bonus(extra)).clamp(0.5, 0.90) as f32;
+            return Some(("recovery".to_string(), IntentCode::Recovery, conf));
         }
     }
 
-    // Approach: elevated HR, elevated HRV (engagement, positive arousal).
+    // Approach: HR↑ + HRV↑ (positive engagement) — suppressed alpha (alert) confirms.
     if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
         if hr > 0.5 && hrv > 0.5 {
-            return Some(("approach".to_string(), IntentCode::Approach, 0.6));
+            let mut extra: u32 = 0;
+            if alpha_z.is_some_and(|a| a < -0.5) {
+                extra += 1;
+            }
+            let conf = (0.60 + bonus(extra)).clamp(0.5, 0.90) as f32;
+            return Some(("approach".to_string(), IntentCode::Approach, conf));
         }
     }
 
-    // Avoidance: strong suppression across signals.
+    // Avoidance: HR↓↓ + HRV↓↓ — elevated theta (emotional processing) confirms.
     if let (Some(hr), Some(hrv)) = (hr_z, hrv_z) {
         if hr < -1.0 && hrv < -1.5 {
-            return Some(("avoidance".to_string(), IntentCode::Avoidance, 0.6));
+            let mut extra: u32 = 0;
+            if theta_z.is_some_and(|t| t > 1.0) {
+                extra += 1;
+            }
+            let conf = (0.60 + bonus(extra)).clamp(0.5, 0.90) as f32;
+            return Some(("avoidance".to_string(), IntentCode::Avoidance, conf));
         }
     }
 

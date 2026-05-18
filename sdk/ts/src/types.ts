@@ -52,6 +52,8 @@ export interface ContextSnapshot {
   baseline_delta?: Record<string, number>;
   /** The currently open recording session UUID, if any. */
   recording_session_id?: string;
+  /** Temporal trend analysis for each metric over the sliding window. */
+  temporal_patterns?: TemporalSignal[];
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
@@ -163,6 +165,39 @@ export interface BaselineHistoryResponse {
   history: BaselineDailyPoint[];
 }
 
+// ── TemporalTrend / TemporalSignal ────────────────────────────────────────────
+
+/**
+ * Direction of change detected over the sliding analysis window.
+ * - `stable`     — effectively flat (change < threshold)
+ * - `rising`     — monotonically increasing slope
+ * - `falling`    — monotonically decreasing slope
+ * - `spiking`    — rapid increase concentrated near the end of the window
+ * - `declining`  — rapid decrease concentrated near the end of the window
+ * - `recovering` — recently rising after a prior falling period
+ */
+export type TemporalTrend =
+  | "stable"
+  | "rising"
+  | "falling"
+  | "spiking"
+  | "declining"
+  | "recovering";
+
+/** Trend analysis result for one metric over the sliding time window. */
+export interface TemporalSignal {
+  metric: string;
+  trend: TemporalTrend;
+  /** Rate of change in metric units per minute. */
+  slope_per_min: number;
+  /** Length of the analysis window in seconds. */
+  window_secs: number;
+  /** Confidence in the trend (R² of linear fit), 0.0–1.0. */
+  confidence: number;
+  /** Number of samples used for this analysis. */
+  samples: number;
+}
+
 // ── Client filter/response types ──────────────────────────────────────────────
 
 export interface HealthResponse {
@@ -179,4 +214,22 @@ export interface SubscribeFilter {
 export interface WsFilter {
   deviceClass?: string[];
   metrics?: string[];
+}
+
+/**
+ * Runtime filter sent to the Semantic WebSocket tier to control which
+ * `ContextSnapshot` objects are forwarded.  Send as:
+ * ```json
+ * { "type": "subscribe", "context_filter": { "intents": ["stress_response"], "min_confidence": 0.7 } }
+ * ```
+ */
+export interface WsContextFilter {
+  /** Only forward snapshots whose intent_code is in this list. */
+  intents?: string[];
+  /** Drop snapshots with confidence below this threshold. */
+  minConfidence?: number;
+  /** Retain only state_deltas from these source classes. */
+  sourceClass?: string[];
+  /** When true, suppress snapshots with intent_code == "neutral". */
+  excludeNeutral?: boolean;
 }

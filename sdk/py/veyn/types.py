@@ -6,6 +6,42 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# ── TemporalTrend / TemporalSignal ────────────────────────────────────────────
+
+# TemporalTrend constants — direction of change over the analysis window.
+TREND_STABLE     = "stable"      # effectively flat
+TREND_RISING     = "rising"      # monotonically increasing
+TREND_FALLING    = "falling"     # monotonically decreasing
+TREND_SPIKING    = "spiking"     # rapid increase near end of window
+TREND_DECLINING  = "declining"   # rapid decrease near end of window
+TREND_RECOVERING = "recovering"  # rising after a prior falling period
+
+TemporalTrend = str  # type alias — any string is valid (forward compat)
+
+
+@dataclass
+class TemporalSignal:
+    """Trend analysis result for one metric over the sliding time window."""
+
+    metric: str
+    trend: TemporalTrend
+    slope_per_min: float
+    window_secs: int
+    confidence: float
+    samples: int
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "TemporalSignal":
+        return cls(
+            metric=d["metric"],
+            trend=d["trend"],
+            slope_per_min=float(d["slope_per_min"]),
+            window_secs=int(d["window_secs"]),
+            confidence=float(d["confidence"]),
+            samples=int(d["samples"]),
+        )
+
+
 # ── IntentCode ────────────────────────────────────────────────────────────────
 
 # Serialised as plain strings; known variants are constants below.
@@ -62,6 +98,7 @@ class ContextSnapshot:
     state_deltas: list[StateDelta]
     baseline_delta: dict[str, float] | None = None
     recording_session_id: str | None = None
+    temporal_patterns: list[TemporalSignal] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "ContextSnapshot":
@@ -76,6 +113,9 @@ class ContextSnapshot:
             state_deltas=[StateDelta.from_dict(sd) for sd in d.get("state_deltas", [])],
             baseline_delta=d.get("baseline_delta"),
             recording_session_id=d.get("recording_session_id"),
+            temporal_patterns=[
+                TemporalSignal.from_dict(tp) for tp in d.get("temporal_patterns", [])
+            ],
         )
 
 

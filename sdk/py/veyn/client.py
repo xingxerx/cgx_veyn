@@ -14,6 +14,7 @@ from .types import (
     BaselineStats,
     ContextSnapshot,
     Session,
+    TemporalSignal,
     VeynDevice,
     VeynEvent,
 )
@@ -205,6 +206,18 @@ class VeynClient:
             data = await resp.json()
         return BaselineStats.from_dict(data)
 
+    # ── Temporal patterns ──────────────────────────────────────────────────────
+
+    async def get_temporal_patterns(self) -> list[TemporalSignal]:
+        """Return trend signals for all metrics with sufficient data in the
+        sliding 20-minute window."""
+        async with self._get_session().get(
+            self._url("/v1/temporal/patterns")
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+        return [TemporalSignal.from_dict(tp) for tp in data.get("patterns", [])]
+
     # ── WebSocket stream ───────────────────────────────────────────────────────
 
     async def ws_subscribe(
@@ -237,6 +250,58 @@ class VeynClient:
                         try:
                             ev = VeynEvent.from_dict(json.loads(message))
                             result = callback(ev)
+                            if asyncio.iscoroutine(result):
+                                await result
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+            except asyncio.CancelledError:
+                raise
+            except (
+                websockets.exceptions.ConnectionClosed,
+                OSError,
+            ):
+                await asyncio.sleep(1.0)
+            except Exception:
+                await asyncio.sleep(1.0)
+
+    async def ws_subscribe_context(
+        self,
+        callback: Callable[[ContextSnapshot], Any],
+        intents: list[str] | None = None,
+        min_confidence: float | None = None,
+        source_class: list[str] | None = None,
+        exclude_neutral: bool = False,
+    ) -> None:
+        """Stream ContextSnapshot objects over WebSocket (Semantic tier).
+
+        Sends a runtime filter to the server immediately after connecting so
+        only the requested intent codes / confidence levels are forwarded.
+        Runs until the current task is cancelled.  Auto-reconnects with a 1 s
+        backoff on disconnection or error.
+        """
+        uri = self._ws_url("/v1/stream")
+        extra_headers = {"Authorization": f"Bearer {self._token}"}
+
+        context_filter: dict[str, Any] = {"exclude_neutral": exclude_neutral}
+        if intents:
+            context_filter["intents"] = intents
+        if min_confidence is not None:
+            context_filter["min_confidence"] = min_confidence
+        if source_class:
+            context_filter["source_class"] = source_class
+
+        subscribe_msg = json.dumps({"type": "subscribe", "context_filter": context_filter})
+
+        while True:
+            try:
+                async with websockets.connect(  # type: ignore[attr-defined]
+                    uri, additional_headers=extra_headers
+                ) as ws:
+                    await ws.send(subscribe_msg)
+                    async for message in ws:
+                        try:
+                            snap = ContextSnapshot.from_dict(json.loads(message))
+                            result = callback(snap)
                             if asyncio.iscoroutine(result):
                                 await result
                         except (json.JSONDecodeError, KeyError):
