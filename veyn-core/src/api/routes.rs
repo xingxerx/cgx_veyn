@@ -8,7 +8,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         Html, IntoResponse, Json,
     },
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
 use serde::Deserialize;
@@ -19,7 +19,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{interval, Duration};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tracing::warn;
-use veyn_schemas::{ContextSnapshot, IntentCode, StateDelta, VeynEvent, VeynNotification};
+use veyn_schemas::{ContextSnapshot, IntentCode, Session, StateDelta, VeynEvent, VeynNotification};
 
 use super::state::AppState;
 use crate::auth::TokenClaim;
@@ -53,7 +53,16 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/gestures/recent", get(gestures_recent))
         .route("/v1/context/current", get(context_current))
         .route("/v1/context/history", get(context_history))
-        .route("/v1/context/subscribe", get(context_subscribe));
+        .route("/v1/context/subscribe", get(context_subscribe))
+        // Session routes (8.1 + 8.2)
+        .route("/v1/session/start", post(session_start))
+        .route("/v1/session/stop", post(session_stop))
+        .route("/v1/sessions", get(sessions_list))
+        .route("/v1/session/:id", get(session_get))
+        .route("/v1/session/:id", patch(session_patch))
+        .route("/v1/session/:id/replay", get(session_replay))
+        // Baseline routes (8.3)
+        .route("/v1/baseline/:device_id/:metric", get(baseline_get));
 
     legacy.merge(v1).with_state(state)
 }
@@ -73,17 +82,24 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let ratio = *state.compression_ratio.lock().unwrap();
     let connected_devices = state.devices.lock().unwrap().len();
     let event_rate_hz = filtered.checked_div(uptime).unwrap_or(0);
+    let recording_session_id = state
+        .session_manager
+        .lock()
+        .unwrap()
+        .current_id()
+        .map(|a| (*a).clone());
 
     Json(json!({
-        "status":            "ok",
-        "version":           env!("CARGO_PKG_VERSION"),
-        "uptime_s":          uptime,
-        "session_id":        *state.session_id,
-        "events_total":      filtered,
-        "events_raw":        raw,
-        "event_rate_hz":     event_rate_hz,
-        "compression_ratio": ratio,
-        "connected_devices": connected_devices,
+        "status":               "ok",
+        "version":              env!("CARGO_PKG_VERSION"),
+        "uptime_s":             uptime,
+        "session_id":           *state.session_id,
+        "events_total":         filtered,
+        "events_raw":           raw,
+        "event_rate_hz":        event_rate_hz,
+        "compression_ratio":    ratio,
+        "connected_devices":    connected_devices,
+        "recording_session_id": recording_session_id,
     }))
 }
 
@@ -202,7 +218,7 @@ async fn context_history(
 #[derive(Deserialize, Clone)]
 struct SubscribeParams {
     /// Comma-separated list of `intent_code` values to match
-    /// (e.g. `?intents=resting,idle`).
+    /// (e.g. `?intents=neutral,recovery`).
     intents: Option<String>,
     /// Minimum confidence score [0.0–1.0].
     min_confidence: Option<f64>,
@@ -247,7 +263,7 @@ async fn context_subscribe(
 
                 // Apply intent code filter.
                 if !intents.is_empty() {
-                    let code_str = intent_code_to_str(&snapshot.intent_code);
+                    let code_str = intent_code_str(&snapshot.intent_code);
                     if !intents.iter().any(|i| i == code_str) {
                         return None;
                     }
@@ -280,16 +296,16 @@ async fn context_subscribe(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-fn intent_code_to_str(code: &IntentCode) -> &'static str {
+fn intent_code_str(code: &IntentCode) -> &str {
     match code {
-        IntentCode::Resting => "resting",
-        IntentCode::Active => "active",
-        IntentCode::Stressed => "stressed",
-        IntentCode::Idle => "idle",
-        IntentCode::Focus => "focus",
+        IntentCode::Neutral => "neutral",
+        IntentCode::CognitiveLoad => "cognitive_load",
+        IntentCode::StressResponse => "stress_response",
+        IntentCode::Approach => "approach",
+        IntentCode::Avoidance => "avoidance",
+        IntentCode::Fatigue => "fatigue",
         IntentCode::Recovery => "recovery",
-        IntentCode::HealthConcern => "health_concern",
-        IntentCode::Observing => "observing",
+        IntentCode::Other(s) => s.as_str(),
     }
 }
 
@@ -387,7 +403,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        // Accept client-sent subscribe filter messages.
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                             match client_msg {
                                 ClientMessage::Subscribe { filter: f } => {
@@ -405,6 +420,271 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 }
             }
         }
+    }
+}
+
+// ── Session routes (8.1 + 8.2) ───────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SessionStartRequest {
+    label: String,
+}
+
+async fn session_start(
+    State(state): State<AppState>,
+    Json(req): Json<SessionStartRequest>,
+) -> impl IntoResponse {
+    let devices = state.devices.lock().unwrap().values().cloned().collect();
+    let db_guard = state.db.as_ref().map(|d| d.lock().unwrap());
+    let db_ref = db_guard.as_deref();
+
+    let session = state
+        .session_manager
+        .lock()
+        .unwrap()
+        .open(req.label, devices, db_ref);
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::to_value(session).unwrap()),
+    )
+        .into_response()
+}
+
+async fn session_stop(State(state): State<AppState>) -> impl IntoResponse {
+    let db_guard = state.db.as_ref().map(|d| d.lock().unwrap());
+    let db_ref = db_guard.as_deref();
+
+    match state.session_manager.lock().unwrap().close(db_ref) {
+        Some(session) => {
+            (StatusCode::OK, Json(serde_json::to_value(session).unwrap())).into_response()
+        }
+        None => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no session is currently open" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn session_get(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    // Check in-memory first (current session).
+    {
+        let sm = state.session_manager.lock().unwrap();
+        if let Some(ref s) = sm.current {
+            if s.id == id {
+                return (StatusCode::OK, Json(serde_json::to_value(s).unwrap())).into_response();
+            }
+        }
+    }
+
+    // Fall back to SQLite.
+    match &state.db {
+        Some(db) => match crate::storage::get_session(&db.lock().unwrap(), &id) {
+            Ok(Some(session)) => {
+                (StatusCode::OK, Json(serde_json::to_value(session).unwrap())).into_response()
+            }
+            Ok(None) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "session not found" })),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found (persistence not available)" })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionPatchRequest {
+    notes: Option<String>,
+    label: Option<String>,
+}
+
+async fn session_patch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SessionPatchRequest>,
+) -> impl IntoResponse {
+    // Only the currently open session can be patched in-memory.
+    {
+        let db_guard = state.db.as_ref().map(|d| d.lock().unwrap());
+        let db_ref = db_guard.as_deref();
+        let mut sm = state.session_manager.lock().unwrap();
+        if let Some(ref mut s) = sm.current {
+            if s.id == id {
+                if let Some(notes) = req.notes {
+                    let _ = sm.annotate(notes, db_ref);
+                }
+                if let Some(label) = req.label {
+                    sm.current.as_mut().unwrap().label = label;
+                }
+                let updated = sm.current.clone().unwrap();
+                return (StatusCode::OK, Json(serde_json::to_value(updated).unwrap()))
+                    .into_response();
+            }
+        }
+    }
+
+    // For closed sessions, patch via SQLite.
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::get_session(&conn, &id) {
+                Ok(Some(mut session)) => {
+                    if let Some(notes) = req.notes {
+                        session.notes = Some(notes);
+                    }
+                    if let Some(label) = req.label {
+                        session.label = label;
+                    }
+                    match crate::storage::update_session(&conn, &session) {
+                        Ok(()) => (StatusCode::OK, Json(serde_json::to_value(session).unwrap()))
+                            .into_response(),
+                        Err(e) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "error": e.to_string() })),
+                        )
+                            .into_response(),
+                    }
+                }
+                Ok(None) => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "session not found" })),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found (persistence not available)" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn session_replay(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::replay_session_events(&conn, &id) {
+                Ok(events) => {
+                    let count = events.len();
+                    (
+                        StatusCode::OK,
+                        Json(json!({ "events": events, "count": count })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionsListParams {
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn default_limit() -> usize {
+    20
+}
+
+async fn sessions_list(
+    State(state): State<AppState>,
+    Query(params): Query<SessionsListParams>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::list_sessions(&conn, params.limit, params.offset) {
+                Ok(sessions) => {
+                    let count = sessions.len();
+                    (
+                        StatusCode::OK,
+                        Json(json!({ "sessions": sessions, "count": count })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => {
+            // Return current session only if no DB.
+            let current: Vec<Session> = state
+                .session_manager
+                .lock()
+                .unwrap()
+                .current
+                .clone()
+                .into_iter()
+                .collect();
+            let count = current.len();
+            (
+                StatusCode::OK,
+                Json(json!({ "sessions": current, "count": count })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ── Baseline routes (8.3) ─────────────────────────────────────────────────────
+
+async fn baseline_get(
+    State(state): State<AppState>,
+    Path((device_id, metric)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match state
+        .baseline_engine
+        .lock()
+        .unwrap()
+        .get_stats(&device_id, &metric)
+    {
+        Some(stats) => (StatusCode::OK, Json(serde_json::to_value(stats).unwrap())).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "insufficient baseline data",
+                "device_id": device_id,
+                "metric": metric,
+                "hint": "at least 7 days of data required"
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -427,11 +707,6 @@ fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
     let metrics = state.latest_metrics.lock().unwrap();
     let devices: Vec<String> = state.devices.lock().unwrap().keys().cloned().collect();
 
-    let state_map: std::collections::HashMap<String, f64> = metrics
-        .values()
-        .map(|e| (e.metric.clone(), e.value))
-        .collect();
-
     let deltas: Vec<StateDelta> = metrics
         .values()
         .map(|e| StateDelta {
@@ -444,54 +719,28 @@ fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
         })
         .collect();
 
-    let (intent, intent_code, confidence) = synthesize_intent_builtin(&state_map);
+    let recording_session_id = state
+        .session_manager
+        .lock()
+        .unwrap()
+        .current_id()
+        .map(|a| (*a).clone());
 
     ContextSnapshot {
         timestamp_ms: now,
         session_id: (*state.session_id).clone(),
-        intent,
-        intent_code,
-        confidence,
+        intent: "neutral".to_string(),
+        intent_code: IntentCode::Neutral,
+        confidence: 0.5,
+        intent_confidence: 0.5,
         active_devices: devices,
         state_deltas: deltas,
+        baseline_delta: None,
+        recording_session_id,
     }
 }
 
-fn synthesize_intent_builtin(
-    state: &std::collections::HashMap<String, f64>,
-) -> (String, IntentCode, f64) {
-    if let Some(&hr) = state.get("heart_rate") {
-        if hr > 100.0 {
-            return (
-                "user under physical stress".to_string(),
-                IntentCode::Stressed,
-                0.8,
-            );
-        }
-        if hr < 60.0 {
-            if state.get("hrv").is_some_and(|&h| h > 50.0) {
-                return (
-                    "user in calm/resting state".to_string(),
-                    IntentCode::Resting,
-                    0.85,
-                );
-            }
-            return (
-                "user in low-activity state".to_string(),
-                IntentCode::Idle,
-                0.7,
-            );
-        }
-        return (
-            "user in normal activity state".to_string(),
-            IntentCode::Active,
-            0.75,
-        );
-    }
-    ("observing".to_string(), IntentCode::Observing, 0.5)
-}
-
-// ── Phase 5 routes ─────────────────────────────────────────────────────────────
+// ── Notification + Presence + Gestures ───────────────────────────────────────
 
 #[derive(Deserialize)]
 struct NotifyRequest {
