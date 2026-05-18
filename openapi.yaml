@@ -1,0 +1,572 @@
+openapi: 3.0.3
+info:
+  title: VEYN Context API
+  description: |
+    VEYN daemon REST and WebSocket API.
+    All endpoints except `/health` and `/metrics` require a `Bearer` token
+    obtained from `~/.local/share/veyn/token` or configured via `tokens.json`.
+  version: "2.0.0"
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:7700
+    description: Local daemon (default port)
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: hex256
+
+  schemas:
+    IntentCode:
+      type: string
+      description: >
+        Structured Intero intent classification derived from z-scored personal
+        baseline comparisons. Agents branch on this value rather than parsing
+        the free-form `intent` string.
+      enum:
+        - neutral
+        - cognitive_load
+        - stress_response
+        - approach
+        - avoidance
+        - fatigue
+        - recovery
+      example: stress_response
+
+    BaselineStats:
+      type: object
+      required: [device_id, metric, mean, stddev, p10, p90, sample_count, window_days, computed_at, sufficient]
+      properties:
+        device_id:    { type: string, example: "ble:AA:BB:CC:DD" }
+        metric:       { type: string, example: "heart_rate" }
+        mean:         { type: number, format: double, example: 62.3 }
+        stddev:       { type: number, format: double, example: 5.1 }
+        p10:          { type: number, format: double, example: 55.0 }
+        p90:          { type: number, format: double, example: 71.0 }
+        sample_count: { type: integer, example: 14400 }
+        window_days:  { type: integer, example: 30 }
+        computed_at:  { type: string, format: date-time }
+        sufficient:
+          type: boolean
+          description: >
+            False until at least 7 days of data have accumulated. Clients must
+            check this flag before relying on delta values.
+
+    Session:
+      type: object
+      required: [id, label, started_at, active_device_ids]
+      properties:
+        id:               { type: string, format: uuid }
+        label:            { type: string, example: "Morning HRV session" }
+        annotation:       { type: string, nullable: true }
+        started_at:       { type: string, format: date-time }
+        ended_at:         { type: string, format: date-time, nullable: true }
+        active_device_ids:
+          type: array
+          items: { type: string }
+
+    StateDelta:
+      type: object
+      required: [device_id, metric, value, unit, ts, source_class]
+      properties:
+        device_id:    { type: string, example: "ble:AA:BB:CC:DD" }
+        metric:       { type: string, example: "heart_rate" }
+        value:        { type: number, format: double, example: 72.0 }
+        unit:         { type: string, example: "bpm" }
+        ts:           { type: integer, format: int64, description: "Unix ms timestamp" }
+        source_class:
+          type: string
+          example: "ble"
+          description: >
+            Adapter source class. Values: ble | mqtt | plugin | mock |
+            healthkit | eeg | evdev | hidraw | midi | serial | fs | presence
+
+    ContextSnapshot:
+      type: object
+      required: [timestamp_ms, session_id, intent, intent_code, intent_confidence, confidence, active_devices, state_deltas]
+      properties:
+        timestamp_ms:         { type: integer, format: int64 }
+        session_id:           { type: string, format: uuid, description: "Daemon-lifecycle UUID (set once at startup)" }
+        recording_session_id: { type: string, format: uuid, nullable: true, description: "Active InteroSession id, if any" }
+        intent:               { type: string, example: "user in calm/resting state" }
+        intent_code:          { $ref: "#/components/schemas/IntentCode" }
+        intent_confidence:    { type: number, format: double, minimum: 0.0, maximum: 1.0 }
+        confidence:           { type: number, format: double, minimum: 0.0, maximum: 1.0 }
+        active_devices:
+          type: array
+          items: { type: string }
+        state_deltas:
+          type: array
+          items: { $ref: "#/components/schemas/StateDelta" }
+        baseline_delta:
+          type: object
+          nullable: true
+          additionalProperties: { type: number, format: double }
+          description: >
+            Z-score map keyed by "{device_id}/{metric}". Only populated for
+            metrics where BaselineStats.sufficient = true.
+          example: { "ble:AA:BB:CC:DD/heart_rate": 1.8, "ble:AA:BB:CC:DD/hrv": -1.2 }
+
+    VeynEvent:
+      type: object
+      required: [id, ts, device_id, source, metric, value, unit]
+      properties:
+        id:        { type: string, format: uuid }
+        ts:        { type: integer, format: int64 }
+        device_id: { type: string }
+        source:    { type: string }
+        metric:    { type: string }
+        value:     { type: number, format: double }
+        unit:      { type: string }
+        meta:
+          type: object
+          additionalProperties: true
+
+    VeynDevice:
+      type: object
+      required: [id, name, source, state, last_seen]
+      properties:
+        id:       { type: string }
+        name:     { type: string }
+        source:   { type: string }
+        state:    { type: string, enum: [connected, disconnected, scanning] }
+        last_seen: { type: integer, format: int64 }
+
+    PresenceInfo:
+      type: object
+      required: [device_id, state, last_seen, since_ts]
+      properties:
+        device_id: { type: string }
+        state:     { type: string, enum: [present, absent] }
+        last_seen: { type: integer, format: int64 }
+        since_ts:  { type: integer, format: int64 }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+paths:
+  /health:
+    get:
+      summary: Health check (no auth required)
+      security: []
+      responses:
+        "200":
+          description: Daemon is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:                 { type: string, example: ok }
+                  version:               { type: string }
+                  uptime_s:              { type: integer }
+                  session_id:            { type: string }
+                  recording_session_id:  { type: string, nullable: true }
+                  events_total:          { type: integer }
+                  events_raw:            { type: integer }
+                  event_rate_hz:         { type: integer }
+                  compression_ratio:     { type: number }
+                  connected_devices:     { type: integer }
+
+  /metrics:
+    get:
+      summary: Prometheus metrics scrape endpoint
+      security: []
+      responses:
+        "200":
+          description: Prometheus text/plain exposition format
+          content:
+            "text/plain; version=0.0.4; charset=utf-8":
+              schema:
+                type: string
+                example: |
+                  # HELP veyn_events_raw_total Total raw events received
+                  # TYPE veyn_events_raw_total counter
+                  veyn_events_raw_total 12345
+
+  /openapi.yaml:
+    get:
+      summary: This OpenAPI specification
+      security: []
+      responses:
+        "200":
+          description: OpenAPI 3.0 spec in YAML format
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /v1/context/current:
+    get:
+      summary: Latest semantic context snapshot
+      responses:
+        "200":
+          description: Current context
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContextSnapshot" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /v1/context/history:
+    get:
+      summary: Historical context snapshots (most-recent first)
+      parameters:
+        - name: n
+          in: query
+          schema: { type: integer, default: 10, minimum: 1, maximum: 100 }
+          description: Number of snapshots to return
+      responses:
+        "200":
+          description: Snapshot history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items: { $ref: "#/components/schemas/ContextSnapshot" }
+                  count: { type: integer }
+
+  /v1/context/subscribe:
+    get:
+      summary: Server-Sent Events stream of context snapshots
+      description: |
+        Returns a persistent SSE stream. Each event has type `context` and
+        a JSON-encoded `ContextSnapshot` as data.
+
+        Apply declarative filters via query parameters — the server evaluates
+        them before sending, so clients only receive what they need.
+      parameters:
+        - name: intents
+          in: query
+          schema: { type: string }
+          example: "stress_response,cognitive_load"
+          description: Comma-separated intent_code values to match
+        - name: min_confidence
+          in: query
+          schema: { type: number, format: double, minimum: 0.0, maximum: 1.0 }
+          description: Minimum confidence threshold
+        - name: source_class
+          in: query
+          schema: { type: string }
+          example: "ble,midi"
+          description: Filter state_deltas to these source classes
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "event: context\ndata: <ContextSnapshot JSON>"
+
+  /v1/events/recent:
+    get:
+      summary: Recent raw events (ring buffer, last 1000)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/VeynEvent" }
+                  count: { type: integer }
+
+  /v1/metrics/{metric}:
+    get:
+      summary: Latest value of a specific metric
+      parameters:
+        - name: metric
+          in: path
+          required: true
+          schema: { type: string }
+          example: heart_rate
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  metric:    { type: string }
+                  value:     { type: number }
+                  unit:      { type: string }
+                  ts:        { type: integer }
+                  device_id: { type: string }
+                  source:    { type: string }
+        "404":
+          description: Metric not found
+
+  /v1/devices:
+    get:
+      summary: List all registered devices
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: "#/components/schemas/VeynDevice" }
+                  count: { type: integer }
+
+  /v1/presence:
+    get:
+      summary: Device presence states
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  presence:
+                    type: array
+                    items: { $ref: "#/components/schemas/PresenceInfo" }
+                  count: { type: integer }
+
+  /v1/notify:
+    post:
+      summary: Send a notification to a companion device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              properties:
+                title:         { type: string }
+                body:          { type: string }
+                target_device: { type: string, nullable: true }
+      responses:
+        "202":
+          description: Notification queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:     { type: string }
+                  status: { type: string, example: queued }
+
+  /v1/plugins:
+    get:
+      summary: List loaded WASM plugins
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plugins:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:        { type: string }
+                        version:     { type: string }
+                        description: { type: string }
+                  count: { type: integer }
+
+  /v1/gestures/recent:
+    get:
+      summary: Recent gesture events from companion devices
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  gestures:
+                    type: array
+                    items: { $ref: "#/components/schemas/VeynEvent" }
+                  count: { type: integer }
+
+  /v1/stream:
+    get:
+      summary: WebSocket event stream
+      description: |
+        Upgrade to WebSocket to receive a live stream of raw VeynEvents.
+
+        After connecting, send a JSON subscribe message to apply filters:
+        ```json
+        {
+          "type": "subscribe",
+          "filter": {
+            "device_class": ["ble", "midi"],
+            "metrics": ["heart_rate", "midi_cc_7"]
+          }
+        }
+        ```
+        Send `{"type": "unsubscribe"}` to revert to receiving all events.
+      responses:
+        "101": { description: Switching protocols }
+
+  /v1/session/start:
+    post:
+      summary: Start a named recording session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              properties:
+                label:      { type: string, example: "Morning HRV session" }
+                annotation: { type: string, nullable: true, example: "Should I take the job offer?" }
+      responses:
+        "201":
+          description: Session started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "409":
+          description: A session is already active
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /v1/session/stop:
+    post:
+      summary: Stop the active recording session
+      responses:
+        "200":
+          description: Session stopped
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404":
+          description: No active session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /v1/sessions:
+    get:
+      summary: List all sessions (most-recent first)
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 200 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session" }
+                  count: { type: integer }
+
+  /v1/session/{id}:
+    get:
+      summary: Get session metadata
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404":
+          description: Session not found
+    patch:
+      summary: Update session label or annotation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:      { type: string }
+                annotation: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404":
+          description: Session not found
+
+  /v1/session/{id}/replay:
+    get:
+      summary: Full-resolution event replay for a session
+      description: >
+        Returns all raw events captured during the session in chronological order,
+        read directly from SQLite (bypasses the compression engine).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: { type: string }
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/VeynEvent" }
+                  count: { type: integer }
+        "404":
+          description: Session not found
+
+  /v1/baseline/{device_id}/{metric}:
+    get:
+      summary: Personal baseline statistics for a metric
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema: { type: string }
+          example: ble:AA:BB:CC:DD
+        - name: metric
+          in: path
+          required: true
+          schema: { type: string }
+          example: heart_rate
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BaselineStats" }
+        "404":
+          description: No baseline data for this device/metric pair

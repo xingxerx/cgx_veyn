@@ -16,3 +16,6 @@ wasmtime      = { version = "25", default-features = false, features = ["craneli
 toml          = "0.8"
 reqwest       = { version = "0.12", features = ["blocking"] }
 chrono        = { workspace = true }
+sha2          = "0.10"
+hex           = "0.4"
+glob          = "0.3"

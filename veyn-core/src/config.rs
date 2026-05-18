@@ -2,7 +2,23 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+// ── ContextTier ───────────────────────────────────────────────────────────────
+
+/// Controls which layer of data a token (or the daemon default) exposes.
+///
+/// - `Raw`      — full `VeynEvent` stream, unfiltered
+/// - `Filtered` — compression-filtered events only (delta + debounce applied)
+/// - `Semantic` — only `ContextSnapshot`; raw events are not exposed
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextTier {
+    Raw,
+    Filtered,
+    #[default]
+    Semantic,
+}
 
 // ── TOML file schema ──────────────────────────────────────────────────────────
 
@@ -39,6 +55,7 @@ struct TomlSecurity {
     cors_origins: Option<Vec<String>>,
     audit_log_path: Option<String>,
     strip_raw_hid: Option<bool>,
+    rate_limit_rps: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -47,12 +64,19 @@ struct TomlAdapters {
     ble: Option<bool>,
     eeg: Option<bool>,
     osc_port: Option<u16>,
+    evdev: Option<bool>,
+    hidraw: Option<bool>,
+    midi: Option<bool>,
+    serial_port: Option<String>,
+    serial_baud: Option<u32>,
+    fs_watch_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct TomlLogging {
     level: Option<String>,
     jsonl_path: Option<String>,
+    db_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -76,6 +100,7 @@ struct TomlCompression {
     context_history_size: Option<usize>,
     debounce_ms: Option<HashMap<String, u64>>,
     epsilons: Option<HashMap<String, f64>>,
+    context_tier: Option<String>,
 }
 
 // ── Public Config ─────────────────────────────────────────────────────────────
@@ -90,6 +115,12 @@ pub struct Config {
     pub ble_enabled: bool,
     pub eeg_enabled: bool,
     pub osc_port: u16,
+    pub evdev_enabled: bool,
+    pub hidraw_enabled: bool,
+    pub midi_enabled: bool,
+    pub serial_port: Option<String>,
+    pub serial_baud: u32,
+    pub fs_watch_paths: Vec<String>,
     pub jsonl_path: String,
     pub plugins_dir: String,
     pub mqtt_url: Option<String>,
@@ -99,11 +130,18 @@ pub struct Config {
     pub cors_origins: Vec<String>,
     pub audit_log_path: Option<String>,
     pub strip_raw_hid: bool,
+    /// Max requests per second per client IP; None means no rate limit.
+    pub rate_limit_rps: Option<u32>,
     pub rules_path: String,
     pub context_history_size: usize,
     pub debounce_ms: HashMap<String, u64>,
     pub epsilons: HashMap<String, f64>,
     pub log_level: String,
+    /// Path to SQLite database for session and baseline persistence.
+    pub db_path: String,
+    /// Default context tier for the daemon; tokens may declare a ceiling equal
+    /// to or below this level.
+    pub context_tier: ContextTier,
 }
 
 impl Default for Config {
@@ -115,6 +153,12 @@ impl Default for Config {
             ble_enabled: false,
             eeg_enabled: false,
             osc_port: 9000,
+            evdev_enabled: false,
+            hidraw_enabled: false,
+            midi_enabled: false,
+            serial_port: None,
+            serial_baud: 115200,
+            fs_watch_paths: Vec::new(),
             jsonl_path: "veyn-events.jsonl".to_string(),
             plugins_dir: "plugins".to_string(),
             mqtt_url: None,
@@ -124,11 +168,14 @@ impl Default for Config {
             cors_origins: vec![],
             audit_log_path: None,
             strip_raw_hid: true,
+            rate_limit_rps: Some(100),
             rules_path: "rules.toml".to_string(),
             context_history_size: 32,
             debounce_ms: default_debounce_ms(),
             epsilons: default_epsilons(),
             log_level: "info".to_string(),
+            db_path: "veyn.db".to_string(),
+            context_tier: ContextTier::Semantic,
         }
     }
 }
@@ -191,6 +238,9 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     if let Some(v) = file.security.strip_raw_hid {
         cfg.strip_raw_hid = v;
     }
+    if let Some(v) = file.security.rate_limit_rps {
+        cfg.rate_limit_rps = if v == 0 { None } else { Some(v) };
+    }
     if let Some(v) = file.adapters.mock {
         cfg.mock_mode = v;
     }
@@ -203,8 +253,29 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     if let Some(v) = file.adapters.osc_port {
         cfg.osc_port = v;
     }
+    if let Some(v) = file.adapters.evdev {
+        cfg.evdev_enabled = v;
+    }
+    if let Some(v) = file.adapters.hidraw {
+        cfg.hidraw_enabled = v;
+    }
+    if let Some(v) = file.adapters.midi {
+        cfg.midi_enabled = v;
+    }
+    if let Some(v) = file.adapters.serial_port {
+        cfg.serial_port = Some(v);
+    }
+    if let Some(v) = file.adapters.serial_baud {
+        cfg.serial_baud = v;
+    }
+    if let Some(v) = file.adapters.fs_watch_paths {
+        cfg.fs_watch_paths = v;
+    }
     if let Some(v) = file.logging.jsonl_path {
         cfg.jsonl_path = v;
+    }
+    if let Some(v) = file.logging.db_path {
+        cfg.db_path = v;
     }
     if let Some(v) = file.logging.level {
         cfg.log_level = v;
@@ -229,6 +300,9 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     }
     if let Some(v) = file.compression.epsilons {
         cfg.epsilons.extend(v);
+    }
+    if let Some(v) = file.compression.context_tier {
+        cfg.context_tier = parse_context_tier(&v);
     }
 
     // Overlay environment variables.
@@ -264,6 +338,9 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     }
     if env_bool("VEYN_NO_AUTH") {
         cfg.require_auth = false;
+    }
+    if let Ok(v) = std::env::var("VEYN_CONTEXT_TIER") {
+        cfg.context_tier = parse_context_tier(&v);
     }
 
     // CLI overrides (highest priority).
@@ -316,4 +393,12 @@ fn env_u16(key: &str) -> Option<u16> {
 
 fn env_u64(key: &str) -> Option<u64> {
     std::env::var(key).ok()?.parse().ok()
+}
+
+pub fn parse_context_tier(s: &str) -> ContextTier {
+    match s.trim().to_lowercase().as_str() {
+        "raw" => ContextTier::Raw,
+        "filtered" => ContextTier::Filtered,
+        _ => ContextTier::Semantic,
+    }
 }

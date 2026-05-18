@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use wasmtime::{Caller, Engine, Linker, Module, Store};
 
 use veyn_schemas::VeynEvent;
@@ -9,9 +10,16 @@ use crate::manifest::PluginManifest;
 /// Size of the guest-side poll output buffer allocated at init time.
 const POLL_BUF: u32 = 64 * 1024;
 
+/// Pending bytes for a device handle — filled by the proxy thread,
+/// drained by `veyn::read_device` host import.
+pub type DeviceQueue = Arc<Mutex<std::collections::VecDeque<Vec<u8>>>>;
+
 /// State passed into every wasmtime host function.
 struct HostState {
     http_client: Arc<reqwest::blocking::Client>,
+    /// Per-handle byte queues populated by device-proxy threads.
+    #[allow(dead_code)]
+    device_queues: Arc<Mutex<HashMap<String, DeviceQueue>>>,
 }
 
 /// A loaded, initialised WASM plugin ready to be polled.
@@ -21,6 +29,8 @@ pub struct PluginRuntime {
     poll: wasmtime::TypedFunc<(u32, u32), u32>,
     poll_buf_ptr: u32,
     memory: wasmtime::Memory,
+    /// Queues exposed to the plugin via the read_device host import.
+    pub device_queues: Arc<Mutex<HashMap<String, DeviceQueue>>>,
 }
 
 // Store<HostState> is Send because HostState: Send.
@@ -29,6 +39,20 @@ unsafe impl Send for PluginRuntime {}
 impl PluginRuntime {
     /// Load and initialise a plugin from its manifest.
     pub fn load(manifest: PluginManifest) -> Result<Self> {
+        let device_queues: Arc<Mutex<HashMap<String, DeviceQueue>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        // Pre-create queues for each declared device descriptor.
+        {
+            let mut map = device_queues.lock().unwrap();
+            for desc in &manifest.devices {
+                map.insert(
+                    desc.id.clone(),
+                    Arc::new(Mutex::new(std::collections::VecDeque::new())),
+                );
+            }
+        }
+
         let engine = Engine::default();
         let mut linker: Linker<HostState> = Linker::new(&engine);
 
@@ -63,7 +87,6 @@ impl PluginRuntime {
 
         // ── host import: veyn::http_get(url_ptr, url_len, tok_ptr, tok_len,
         //                               out_ptr, out_cap) -> i32
-        // Returns bytes written into guest memory at out_ptr, or -1 on error.
         linker.func_wrap(
             "veyn",
             "http_get",
@@ -80,7 +103,6 @@ impl PluginRuntime {
                     .and_then(|e| e.into_memory())
                     .expect("memory export");
 
-                // Read inputs from guest memory before any mutable borrow.
                 let (url, token) = {
                     let data = mem.data(&caller);
                     let url = match data
@@ -100,9 +122,7 @@ impl PluginRuntime {
                     (url, token)
                 };
 
-                // Clone the Arc so we can release the immutable borrow.
                 let client = Arc::clone(&caller.data().http_client);
-
                 let mut req = client.get(&url);
                 if let Some(ref t) = token {
                     req = req.bearer_auth(t);
@@ -120,10 +140,62 @@ impl PluginRuntime {
                 let data = mem.data_mut(&mut caller);
                 data[out_ptr as usize..out_ptr as usize + write_len]
                     .copy_from_slice(&body[..write_len]);
-
                 write_len as i32
             },
         )?;
+
+        // ── host import: veyn::read_device(id_ptr, id_len, out_ptr, out_cap) -> i32
+        // Non-blocking: drains one pending chunk from the device queue into guest
+        // memory. Returns bytes written, 0 if queue is empty, -1 on error.
+        {
+            let queues = Arc::clone(&device_queues);
+            linker.func_wrap(
+                "veyn",
+                "read_device",
+                move |mut caller: Caller<'_, HostState>,
+                      id_ptr: u32,
+                      id_len: u32,
+                      out_ptr: u32,
+                      out_cap: u32|
+                      -> i32 {
+                    let mem = caller
+                        .get_export("memory")
+                        .and_then(|e| e.into_memory())
+                        .expect("memory export");
+
+                    let device_id = {
+                        let data = mem.data(&caller);
+                        match data
+                            .get(id_ptr as usize..(id_ptr + id_len) as usize)
+                            .and_then(|s| std::str::from_utf8(s).ok())
+                        {
+                            Some(s) => s.to_owned(),
+                            None => return -1,
+                        }
+                    };
+
+                    let chunk = {
+                        let map = queues.lock().unwrap();
+                        if let Some(queue) = map.get(&device_id) {
+                            queue.lock().unwrap().pop_front()
+                        } else {
+                            return -1; // unknown handle
+                        }
+                    };
+
+                    match chunk {
+                        None => 0, // empty queue
+                        Some(bytes) => {
+                            let write_len = bytes.len().min(out_cap as usize);
+                            let data = mem.data_mut(&mut caller);
+                            data[out_ptr as usize..out_ptr as usize + write_len]
+                                .copy_from_slice(&bytes[..write_len]);
+                            write_len as i32
+                        }
+                    }
+                },
+            )?;
+        }
 
         // ── load and instantiate the WASM module ──────────────────────────────
         let wasm_bytes = std::fs::read(&manifest.wasm_path)
@@ -133,6 +205,7 @@ impl PluginRuntime {
 
         let host_state = HostState {
             http_client: Arc::new(reqwest::blocking::Client::new()),
+            device_queues: Arc::clone(&device_queues),
         };
         let mut store = Store::new(&engine, host_state);
         let instance = linker.instantiate(&mut store, &module)?;
@@ -141,11 +214,9 @@ impl PluginRuntime {
             .get_memory(&mut store, "memory")
             .ok_or_else(|| anyhow!("plugin '{}' has no 'memory' export", manifest.plugin.name))?;
 
-        // Allocate the poll output buffer inside the guest.
         let alloc = instance.get_typed_func::<u32, u32>(&mut store, "veyn_alloc")?;
         let poll_buf_ptr = alloc.call(&mut store, POLL_BUF)?;
 
-        // Serialize config and write it into a temporary guest allocation.
         let config_json =
             serde_json::to_string(&manifest.config).unwrap_or_else(|_| "{}".to_string());
         let config_bytes = config_json.as_bytes();
@@ -155,7 +226,6 @@ impl PluginRuntime {
         let init = instance.get_typed_func::<(u32, u32), i32>(&mut store, "veyn_init")?;
         let rc = init.call(&mut store, (config_ptr, config_bytes.len() as u32))?;
 
-        // Free the temporary config buffer.
         let free = instance.get_typed_func::<(u32, u32), ()>(&mut store, "veyn_free")?;
         free.call(&mut store, (config_ptr, config_bytes.len() as u32))?;
 
@@ -172,6 +242,7 @@ impl PluginRuntime {
         tracing::info!(
             plugin  = %manifest.plugin.name,
             version = %manifest.plugin.version,
+            devices = manifest.devices.len(),
             "plugin loaded"
         );
 
@@ -181,6 +252,7 @@ impl PluginRuntime {
             poll,
             poll_buf_ptr,
             memory,
+            device_queues,
         })
     }
 

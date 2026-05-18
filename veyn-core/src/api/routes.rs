@@ -3,20 +3,27 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    http::StatusCode,
-    response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    http::{header, StatusCode},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        Html, IntoResponse, Json,
+    },
+    routing::{get, patch, post},
     Router,
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::convert::Infallible;
 use std::sync::atomic::Ordering;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{interval, Duration};
+use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tracing::warn;
-use veyn_schemas::{ContextSnapshot, StateDelta, VeynEvent, VeynNotification};
+use veyn_schemas::{ContextSnapshot, IntentCode, Session, StateDelta, VeynEvent, VeynNotification};
 
 use super::state::AppState;
+use crate::auth::TokenClaim;
+use crate::config::ContextTier;
 
 const DASHBOARD: &str = include_str!("dashboard.html");
 
@@ -32,7 +39,9 @@ pub fn router(state: AppState) -> Router {
         .route("/stream", get(ws_stream))
         .route("/notify", post(notify_post))
         .route("/presence", get(presence_get))
-        .route("/gestures/recent", get(gestures_recent));
+        .route("/gestures/recent", get(gestures_recent))
+        .route("/metrics", get(prometheus_metrics))
+        .route("/openapi.yaml", get(openapi_spec));
 
     // Versioned /v1/ routes.
     let v1 = Router::new()
@@ -46,7 +55,22 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/presence", get(presence_get))
         .route("/v1/gestures/recent", get(gestures_recent))
         .route("/v1/context/current", get(context_current))
-        .route("/v1/context/history", get(context_history));
+        .route("/v1/context/history", get(context_history))
+        .route("/v1/context/subscribe", get(context_subscribe))
+        // Session routes (8.1 + 8.2)
+        .route("/v1/session/start", post(session_start))
+        .route("/v1/session/stop", post(session_stop))
+        .route("/v1/sessions", get(sessions_list))
+        .route("/v1/session/:id", get(session_get))
+        .route("/v1/session/:id", patch(session_patch))
+        .route("/v1/session/:id/replay", get(session_replay))
+        .route("/v1/session/:id/export", get(session_export))
+        // Baseline routes (8.3)
+        .route("/v1/baseline/:device_id/:metric", get(baseline_get))
+        .route(
+            "/v1/baseline/:device_id/:metric/history",
+            get(baseline_history),
+        );
 
     legacy.merge(v1).with_state(state)
 }
@@ -66,17 +90,24 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let ratio = *state.compression_ratio.lock().unwrap();
     let connected_devices = state.devices.lock().unwrap().len();
     let event_rate_hz = filtered.checked_div(uptime).unwrap_or(0);
+    let recording_session_id = state
+        .session_manager
+        .lock()
+        .unwrap()
+        .current_id()
+        .map(|a| (*a).clone());
 
     Json(json!({
-        "status":            "ok",
-        "version":           env!("CARGO_PKG_VERSION"),
-        "uptime_s":          uptime,
-        "session_id":        *state.session_id,
-        "events_total":      filtered,
-        "events_raw":        raw,
-        "event_rate_hz":     event_rate_hz,
-        "compression_ratio": ratio,
-        "connected_devices": connected_devices,
+        "status":               "ok",
+        "version":              env!("CARGO_PKG_VERSION"),
+        "uptime_s":             uptime,
+        "session_id":           *state.session_id,
+        "events_total":         filtered,
+        "events_raw":           raw,
+        "event_rate_hz":        event_rate_hz,
+        "compression_ratio":    ratio,
+        "connected_devices":    connected_devices,
+        "recording_session_id": recording_session_id,
     }))
 }
 
@@ -141,15 +172,19 @@ async fn plugins_list(State(state): State<AppState>) -> Json<serde_json::Value> 
 
 // ── GET /v1/context/current ───────────────────────────────────────────────────
 
-async fn context_current(State(state): State<AppState>) -> impl IntoResponse {
-    match state.latest_context.lock().unwrap().clone() {
-        Some(snap) => (StatusCode::OK, Json(serde_json::to_value(snap).unwrap())).into_response(),
-        None => {
-            // Build a snapshot on the fly from latest metrics.
-            let snap = build_snapshot_from_metrics(&state);
-            (StatusCode::OK, Json(serde_json::to_value(snap).unwrap())).into_response()
-        }
-    }
+async fn context_current(
+    State(state): State<AppState>,
+    claim: Option<axum::Extension<TokenClaim>>,
+) -> impl IntoResponse {
+    let allowed_sources = claim.as_ref().and_then(|c| c.0.allowed_sources.clone());
+
+    let snap = match state.latest_context.lock().unwrap().clone() {
+        Some(s) => s,
+        None => build_snapshot_from_metrics(&state),
+    };
+
+    let snap = apply_source_filter(snap, allowed_sources.as_deref());
+    (StatusCode::OK, Json(serde_json::to_value(snap).unwrap())).into_response()
 }
 
 // ── GET /v1/context/history?n=10 ─────────────────────────────────────────────
@@ -167,7 +202,10 @@ fn default_n() -> usize {
 async fn context_history(
     State(state): State<AppState>,
     Query(params): Query<HistoryParams>,
+    claim: Option<axum::Extension<TokenClaim>>,
 ) -> Json<serde_json::Value> {
+    let allowed_sources = claim.as_ref().and_then(|c| c.0.allowed_sources.clone());
+
     let history: Vec<ContextSnapshot> = state
         .context_history
         .lock()
@@ -176,98 +214,243 @@ async fn context_history(
         .rev()
         .take(params.n)
         .cloned()
+        .map(|s| apply_source_filter(s, allowed_sources.as_deref()))
         .collect();
     let count = history.len();
     Json(json!({ "history": history, "count": count }))
 }
 
-fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
-    let now = chrono::Utc::now().timestamp_millis();
-    let metrics = state.latest_metrics.lock().unwrap();
-    let devices: Vec<String> = state.devices.lock().unwrap().keys().cloned().collect();
+// ── GET /v1/context/subscribe  (SSE) ─────────────────────────────────────────
 
-    let state_map: std::collections::HashMap<String, f64> = metrics
-        .values()
-        .map(|e| (e.metric.clone(), e.value))
-        .collect();
-
-    let deltas: Vec<StateDelta> = metrics
-        .values()
-        .map(|e| StateDelta {
-            device_id: e.device_id.clone(),
-            metric: e.metric.clone(),
-            value: e.value,
-            unit: e.unit.clone(),
-            ts: e.ts,
-        })
-        .collect();
-
-    // Simple built-in intent rules used when no external rules.toml is present.
-    let (intent, confidence) = synthesize_intent_builtin(&state_map);
-
-    ContextSnapshot {
-        timestamp_ms: now,
-        session_id: (*state.session_id).clone(),
-        intent,
-        confidence,
-        active_devices: devices,
-        state_deltas: deltas,
-    }
+/// Filter DSL query params accepted by the SSE subscribe endpoint.
+#[derive(Deserialize, Clone)]
+struct SubscribeParams {
+    /// Comma-separated list of `intent_code` values to match
+    /// (e.g. `?intents=neutral,recovery`).
+    intents: Option<String>,
+    /// Minimum confidence score [0.0–1.0].
+    min_confidence: Option<f64>,
+    /// Comma-separated list of source classes to include
+    /// (e.g. `?source_class=ble,midi`).
+    source_class: Option<String>,
 }
 
-fn synthesize_intent_builtin(state: &std::collections::HashMap<String, f64>) -> (String, f64) {
-    if let Some(&hr) = state.get("heart_rate") {
-        if hr > 100.0 {
-            return ("user under physical stress".to_string(), 0.8);
-        }
-        if hr < 60.0 {
-            if state.get("hrv").is_some_and(|&h| h > 50.0) {
-                return ("user in calm/resting state".to_string(), 0.85);
+async fn context_subscribe(
+    State(state): State<AppState>,
+    Query(params): Query<SubscribeParams>,
+    claim: Option<axum::Extension<TokenClaim>>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let allowed_sources_token = claim.as_ref().and_then(|c| c.0.allowed_sources.clone());
+
+    let intents: Vec<String> = params
+        .intents
+        .as_deref()
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    let source_filter: Vec<String> = params
+        .source_class
+        .as_deref()
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    let min_conf = params.min_confidence.unwrap_or(0.0);
+
+    let rx = state.context_broadcast_tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(move |result| {
+        let intents = intents.clone();
+        let source_filter = source_filter.clone();
+        let allowed_sources_token = allowed_sources_token.clone();
+
+        match result {
+            Ok(mut snapshot) => {
+                // Apply confidence filter.
+                if snapshot.confidence < min_conf {
+                    return None;
+                }
+
+                // Apply intent code filter.
+                if !intents.is_empty() {
+                    let code_str = intent_code_str(&snapshot.intent_code);
+                    if !intents.iter().any(|i| i == code_str) {
+                        return None;
+                    }
+                }
+
+                // Apply source class filter from query params.
+                if !source_filter.is_empty() {
+                    snapshot
+                        .state_deltas
+                        .retain(|d| source_filter.iter().any(|s| s == &d.source_class));
+                }
+
+                // Apply source class filter from token scope.
+                if let Some(ref allowed) = allowed_sources_token {
+                    snapshot
+                        .state_deltas
+                        .retain(|d| allowed.iter().any(|s| s == &d.source_class));
+                }
+
+                let json = serde_json::to_string(&snapshot).ok()?;
+                Some(Ok(Event::default().event("context").data(json)))
             }
-            return ("user in low-activity state".to_string(), 0.7);
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                warn!("SSE subscriber lagged {} snapshots", n);
+                None
+            }
         }
-        return ("user in normal activity state".to_string(), 0.75);
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+fn intent_code_str(code: &IntentCode) -> &str {
+    match code {
+        IntentCode::Neutral => "neutral",
+        IntentCode::CognitiveLoad => "cognitive_load",
+        IntentCode::StressResponse => "stress_response",
+        IntentCode::Approach => "approach",
+        IntentCode::Avoidance => "avoidance",
+        IntentCode::Fatigue => "fatigue",
+        IntentCode::Recovery => "recovery",
+        IntentCode::Other(s) => s.as_str(),
     }
-    ("observing".to_string(), 0.5)
 }
 
 // ── GET /stream  (WebSocket) ──────────────────────────────────────────────────
 
-async fn ws_stream(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+async fn ws_stream(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    claim: Option<axum::Extension<TokenClaim>>,
+) -> impl IntoResponse {
+    let tier = effective_tier(&state, claim.as_ref().map(|c| &c.0));
+    ws.on_upgrade(move |socket| handle_socket(socket, state, tier))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: AppState) {
+/// Resolve the effective tier: token ceiling takes precedence; falls back to
+/// the daemon-level default from config.
+fn effective_tier(state: &AppState, claim: Option<&TokenClaim>) -> ContextTier {
+    claim
+        .and_then(|c| c.tier_ceiling.clone())
+        .unwrap_or_else(|| state.config.context_tier.clone())
+}
+
+/// Client-to-server message for runtime WebSocket subscription filtering.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ClientMessage {
+    Subscribe { filter: WsEventFilter },
+    Unsubscribe,
+}
+
+#[derive(Deserialize, Clone, Default)]
+struct WsEventFilter {
+    /// Only forward events from these source classes.
+    device_class: Option<Vec<String>>,
+    /// Only forward events with these metric names.
+    metrics: Option<Vec<String>>,
+}
+
+impl WsEventFilter {
+    fn accepts(&self, event: &VeynEvent) -> bool {
+        if let Some(classes) = &self.device_class {
+            if !classes.iter().any(|c| c == &event.source) {
+                return false;
+            }
+        }
+        if let Some(metrics) = &self.metrics {
+            if !metrics.iter().any(|m| m == &event.metric) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier) {
     let mut rx = state.broadcast_tx.subscribe();
+    let mut cx_rx = state.context_broadcast_tx.subscribe();
+    let mut filter = WsEventFilter::default();
 
-    // Replay ring buffer to newly connected client.
-    let replay: Vec<VeynEvent> = state
-        .recent_events
-        .lock()
-        .unwrap()
-        .iter()
-        .cloned()
-        .collect();
+    // For Semantic tier, replay the latest context snapshot instead of raw events.
+    if tier == ContextTier::Semantic {
+        let maybe_snap = state.latest_context.lock().unwrap().clone();
+        if let Some(snap) = maybe_snap {
+            if let Ok(json) = serde_json::to_string(&snap) {
+                let _ = socket.send(Message::Text(json)).await;
+            }
+        }
+    } else {
+        // Replay ring buffer to newly connected client (Raw / Filtered tiers).
+        let replay: Vec<VeynEvent> = state
+            .recent_events
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect();
 
-    for event in &replay {
-        let Ok(json) = serde_json::to_string(event) else {
-            continue;
-        };
-        if socket.send(Message::Text(json)).await.is_err() {
-            return;
+        for event in &replay {
+            if !filter.accepts(event) {
+                continue;
+            }
+            let Ok(json) = serde_json::to_string(event) else {
+                continue;
+            };
+            if socket.send(Message::Text(json)).await.is_err() {
+                return;
+            }
         }
     }
 
-    // Keepalive ping every 30 s.
     let mut ping_ticker = interval(Duration::from_secs(30));
-    ping_ticker.tick().await; // consume the immediate first tick
+    ping_ticker.tick().await;
 
     loop {
         tokio::select! {
-            result = rx.recv() => {
+            // ── Raw / Filtered tier: stream VeynEvents (with optional session frame) ──
+            result = rx.recv(), if tier != ContextTier::Semantic => {
                 match result {
                     Ok(event) => {
-                        let json = match serde_json::to_string(&event) {
+                        if !filter.accepts(&event) {
+                            continue;
+                        }
+                        // Session framing: wrap in envelope when a session is active.
+                        let active_session = {
+                            let sm = state.session_manager.lock().unwrap();
+                            sm.current_id().map(|a| (*a).clone())
+                        };
+
+                        let json = if let Some(session_id) = active_session {
+                            match serde_json::to_string(&json!({
+                                "session_id": session_id,
+                                "channel":    event.device_id,
+                                "event":      event,
+                            })) {
+                                Ok(j) => j,
+                                Err(_) => continue,
+                            }
+                        } else {
+                            match serde_json::to_string(&event) {
+                                Ok(j) => j,
+                                Err(_) => continue,
+                            }
+                        };
+
+                        if socket.send(Message::Text(json)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(RecvError::Lagged(n)) => warn!("WebSocket subscriber lagged {} events", n),
+                    Err(RecvError::Closed) => break,
+                }
+            }
+            // ── Semantic tier: stream ContextSnapshots ────────────────────────────────
+            result = cx_rx.recv(), if tier == ContextTier::Semantic => {
+                match result {
+                    Ok(snapshot) => {
+                        let json = match serde_json::to_string(&snapshot) {
                             Ok(j) => j,
                             Err(_) => continue,
                         };
@@ -275,7 +458,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             break;
                         }
                     }
-                    Err(RecvError::Lagged(n)) => warn!("WebSocket subscriber lagged {} events", n),
+                    Err(RecvError::Lagged(n)) => warn!("WS semantic subscriber lagged {} snapshots", n),
                     Err(RecvError::Closed) => break,
                 }
             }
@@ -286,6 +469,18 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
             msg = socket.recv() => {
                 match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                            match client_msg {
+                                ClientMessage::Subscribe { filter: f } => {
+                                    filter = f;
+                                }
+                                ClientMessage::Unsubscribe => {
+                                    filter = WsEventFilter::default();
+                                }
+                            }
+                        }
+                    }
                     Some(Ok(Message::Pong(_))) => {}
                     Some(Ok(_)) => {}
                     _ => break,
@@ -295,7 +490,437 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
 }
 
-// ── Phase 5 routes ─────────────────────────────────────────────────────────────
+// ── Session routes (8.1 + 8.2) ───────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SessionStartRequest {
+    label: String,
+}
+
+async fn session_start(
+    State(state): State<AppState>,
+    Json(req): Json<SessionStartRequest>,
+) -> impl IntoResponse {
+    let devices = state.devices.lock().unwrap().values().cloned().collect();
+    let db_guard = state.db.as_ref().map(|d| d.lock().unwrap());
+    let db_ref = db_guard.as_deref();
+
+    let session = state
+        .session_manager
+        .lock()
+        .unwrap()
+        .open(req.label, devices, db_ref);
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::to_value(session).unwrap()),
+    )
+        .into_response()
+}
+
+async fn session_stop(State(state): State<AppState>) -> impl IntoResponse {
+    let db_guard = state.db.as_ref().map(|d| d.lock().unwrap());
+    let db_ref = db_guard.as_deref();
+
+    match state.session_manager.lock().unwrap().close(db_ref) {
+        Some(session) => {
+            (StatusCode::OK, Json(serde_json::to_value(session).unwrap())).into_response()
+        }
+        None => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no session is currently open" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn session_get(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    // Check in-memory first (current session).
+    {
+        let sm = state.session_manager.lock().unwrap();
+        if let Some(ref s) = sm.current {
+            if s.id == id {
+                return (StatusCode::OK, Json(serde_json::to_value(s).unwrap())).into_response();
+            }
+        }
+    }
+
+    // Fall back to SQLite.
+    match &state.db {
+        Some(db) => match crate::storage::get_session(&db.lock().unwrap(), &id) {
+            Ok(Some(session)) => {
+                (StatusCode::OK, Json(serde_json::to_value(session).unwrap())).into_response()
+            }
+            Ok(None) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "session not found" })),
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found (persistence not available)" })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionPatchRequest {
+    notes: Option<String>,
+    label: Option<String>,
+}
+
+async fn session_patch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SessionPatchRequest>,
+) -> impl IntoResponse {
+    // Only the currently open session can be patched in-memory.
+    {
+        let db_guard = state.db.as_ref().map(|d| d.lock().unwrap());
+        let db_ref = db_guard.as_deref();
+        let mut sm = state.session_manager.lock().unwrap();
+        if let Some(ref mut s) = sm.current {
+            if s.id == id {
+                if let Some(notes) = req.notes {
+                    let _ = sm.annotate(notes, db_ref);
+                }
+                if let Some(label) = req.label {
+                    sm.current.as_mut().unwrap().label = label;
+                }
+                let updated = sm.current.clone().unwrap();
+                return (StatusCode::OK, Json(serde_json::to_value(updated).unwrap()))
+                    .into_response();
+            }
+        }
+    }
+
+    // For closed sessions, patch via SQLite.
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::get_session(&conn, &id) {
+                Ok(Some(mut session)) => {
+                    if let Some(notes) = req.notes {
+                        session.notes = Some(notes);
+                    }
+                    if let Some(label) = req.label {
+                        session.label = label;
+                    }
+                    match crate::storage::update_session(&conn, &session) {
+                        Ok(()) => (StatusCode::OK, Json(serde_json::to_value(session).unwrap()))
+                            .into_response(),
+                        Err(e) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "error": e.to_string() })),
+                        )
+                            .into_response(),
+                    }
+                }
+                Ok(None) => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "session not found" })),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "session not found (persistence not available)" })),
+        )
+            .into_response(),
+    }
+}
+
+async fn session_replay(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::replay_session_events(&conn, &id) {
+                Ok(events) => {
+                    let count = events.len();
+                    (
+                        StatusCode::OK,
+                        Json(json!({ "events": events, "count": count })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionsListParams {
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn default_limit() -> usize {
+    20
+}
+
+async fn sessions_list(
+    State(state): State<AppState>,
+    Query(params): Query<SessionsListParams>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::list_sessions(&conn, params.limit, params.offset) {
+                Ok(sessions) => {
+                    let count = sessions.len();
+                    (
+                        StatusCode::OK,
+                        Json(json!({ "sessions": sessions, "count": count })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => {
+            // Return current session only if no DB.
+            let current: Vec<Session> = state
+                .session_manager
+                .lock()
+                .unwrap()
+                .current
+                .clone()
+                .into_iter()
+                .collect();
+            let count = current.len();
+            (
+                StatusCode::OK,
+                Json(json!({ "sessions": current, "count": count })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ── Baseline routes (8.3) ─────────────────────────────────────────────────────
+
+async fn baseline_get(
+    State(state): State<AppState>,
+    Path((device_id, metric)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match state
+        .baseline_engine
+        .lock()
+        .unwrap()
+        .get_stats(&device_id, &metric)
+    {
+        Some(stats) => (StatusCode::OK, Json(serde_json::to_value(stats).unwrap())).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "insufficient baseline data",
+                "device_id": device_id,
+                "metric": metric,
+                "hint": "at least 7 days of data required"
+            })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/session/:id/export?format=csv ────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ExportParams {
+    #[serde(default = "default_format")]
+    format: String,
+}
+
+fn default_format() -> String {
+    "csv".to_string()
+}
+
+async fn session_export(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<ExportParams>,
+) -> impl IntoResponse {
+    if params.format != "csv" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "only format=csv is supported" })),
+        )
+            .into_response();
+    }
+
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::export_session_csv(&conn, &id) {
+                Ok(csv) => (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+                        (
+                            header::CONTENT_DISPOSITION,
+                            &format!("attachment; filename=\"session-{id}.csv\""),
+                        ),
+                    ],
+                    csv,
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/baseline/:device_id/:metric/history?days=30 ───────────────────────
+
+#[derive(Deserialize)]
+struct BaselineHistoryParams {
+    #[serde(default = "default_days")]
+    days: u32,
+}
+
+fn default_days() -> u32 {
+    30
+}
+
+async fn baseline_history(
+    State(state): State<AppState>,
+    Path((device_id, metric)): Path<(String, String)>,
+    Query(params): Query<BaselineHistoryParams>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match crate::storage::load_baseline_daily_history(
+                &conn,
+                &device_id,
+                &metric,
+                params.days,
+            ) {
+                Ok(history) => {
+                    let points: Vec<serde_json::Value> = history
+                        .into_iter()
+                        .map(|(ts, mean)| json!({ "ts": ts, "mean": mean }))
+                        .collect();
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "device_id": device_id,
+                            "metric": metric,
+                            "days": params.days,
+                            "history": points,
+                        })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn apply_source_filter(
+    mut snapshot: ContextSnapshot,
+    allowed: Option<&[String]>,
+) -> ContextSnapshot {
+    if let Some(sources) = allowed {
+        snapshot
+            .state_deltas
+            .retain(|d| sources.iter().any(|s| s == &d.source_class));
+    }
+    snapshot
+}
+
+fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
+    let now = chrono::Utc::now().timestamp_millis();
+    let metrics = state.latest_metrics.lock().unwrap();
+    let devices: Vec<String> = state.devices.lock().unwrap().keys().cloned().collect();
+
+    let deltas: Vec<StateDelta> = metrics
+        .values()
+        .map(|e| StateDelta {
+            device_id: e.device_id.clone(),
+            metric: e.metric.clone(),
+            value: e.value,
+            unit: e.unit.clone(),
+            ts: e.ts,
+            source_class: e.source.clone(),
+        })
+        .collect();
+
+    let recording_session_id = state
+        .session_manager
+        .lock()
+        .unwrap()
+        .current_id()
+        .map(|a| (*a).clone());
+
+    ContextSnapshot {
+        timestamp_ms: now,
+        session_id: (*state.session_id).clone(),
+        intent: "neutral".to_string(),
+        intent_code: IntentCode::Neutral,
+        confidence: 0.5,
+        intent_confidence: 0.5,
+        active_devices: devices,
+        state_deltas: deltas,
+        baseline_delta: None,
+        recording_session_id,
+    }
+}
+
+// ── Notification + Presence + Gestures ───────────────────────────────────────
 
 #[derive(Deserialize)]
 struct NotifyRequest {
@@ -337,4 +962,50 @@ async fn gestures_recent(State(state): State<AppState>) -> Json<serde_json::Valu
         .collect();
     let count = gestures.len();
     Json(json!({ "gestures": gestures, "count": count }))
+}
+
+// ── GET /metrics  (Prometheus text/plain) ──────────────────────────────────────
+
+async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let raw = state.raw_event_count.load(Ordering::Relaxed);
+    let passed = state.event_count.load(Ordering::Relaxed);
+    let ratio = *state.compression_ratio.lock().unwrap();
+    let devices = state.devices.lock().unwrap().len();
+    let uptime = state.start_time.elapsed().as_secs();
+    let text = format!(
+        "# HELP veyn_events_raw_total Total raw events received\n\
+         # TYPE veyn_events_raw_total counter\n\
+         veyn_events_raw_total {raw}\n\
+         # HELP veyn_events_passed_total Events passed after compression\n\
+         # TYPE veyn_events_passed_total counter\n\
+         veyn_events_passed_total {passed}\n\
+         # HELP veyn_compression_ratio Current compression ratio\n\
+         # TYPE veyn_compression_ratio gauge\n\
+         veyn_compression_ratio {ratio:.4}\n\
+         # HELP veyn_active_devices Number of active devices\n\
+         # TYPE veyn_active_devices gauge\n\
+         veyn_active_devices {devices}\n\
+         # HELP veyn_uptime_seconds Daemon uptime in seconds\n\
+         # TYPE veyn_uptime_seconds counter\n\
+         veyn_uptime_seconds {uptime}\n"
+    );
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        text,
+    )
+}
+
+// ── GET /openapi.yaml ──────────────────────────────────────────────────────────
+
+async fn openapi_spec() -> impl IntoResponse {
+    const SPEC: &str = include_str!("../../../openapi.yaml");
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/yaml")],
+        SPEC,
+    )
 }
