@@ -226,7 +226,11 @@ fn classify_intero(
             }
             let base = ((hr - 1.5) + hrv.abs()) / 6.0;
             let conf = (base + bonus(extra)).clamp(0.55, 0.95) as f32;
-            return Some(("stress_response".to_string(), IntentCode::StressResponse, conf));
+            return Some((
+                "stress_response".to_string(),
+                IntentCode::StressResponse,
+                conf,
+            ));
         }
     }
 
@@ -243,7 +247,11 @@ fn classify_intero(
                     extra += 1;
                 }
                 let conf = (0.65 + bonus(extra)).clamp(0.5, 0.92) as f32;
-                return Some(("cognitive_load".to_string(), IntentCode::CognitiveLoad, conf));
+                return Some((
+                    "cognitive_load".to_string(),
+                    IntentCode::CognitiveLoad,
+                    conf,
+                ));
             }
         }
     }
