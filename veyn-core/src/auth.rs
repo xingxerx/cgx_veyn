@@ -99,54 +99,58 @@ fn current_uid() -> Option<u32> {
     None
 }
 
-#[allow(unused_variables)]
+#[cfg(unix)]
 fn verify_dir_ownership(dir: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let meta = fs::metadata(dir).with_context(|| format!("stat {}", dir.display()))?;
-        let Some(expected) = current_uid() else {
-            warn!("cannot determine process uid; skipping directory ownership check");
-            return Ok(());
-        };
-        if meta.uid() != expected {
-            bail!(
-                "token directory {} is owned by uid {} but process is uid {}",
-                dir.display(),
-                meta.uid(),
-                expected
-            );
-        }
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(dir).with_context(|| format!("stat {}", dir.display()))?;
+    let Some(expected) = current_uid() else {
+        warn!("cannot determine process uid; skipping directory ownership check");
+        return Ok(());
+    };
+    if meta.uid() != expected {
+        bail!(
+            "token directory {} is owned by uid {} but process is uid {}",
+            dir.display(),
+            meta.uid(),
+            expected
+        );
     }
     Ok(())
 }
 
-#[allow(unused_variables)]
+#[cfg(not(unix))]
+fn verify_dir_ownership(_dir: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
 fn verify_file_ownership(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let meta = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
-        let Some(expected) = current_uid() else {
-            warn!("cannot determine process uid; skipping file ownership check");
-            return Ok(());
-        };
-        if meta.uid() != expected {
-            bail!(
-                "token file {} is owned by uid {} but process is uid {}",
-                path.display(),
-                meta.uid(),
-                expected
-            );
-        }
-        if meta.permissions().mode() & 0o177 != 0 {
-            bail!(
-                "token file {} has unsafe permissions {:o}; expected 0600",
-                path.display(),
-                meta.permissions().mode() & 0o777
-            );
-        }
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    let Some(expected) = current_uid() else {
+        warn!("cannot determine process uid; skipping file ownership check");
+        return Ok(());
+    };
+    if meta.uid() != expected {
+        bail!(
+            "token file {} is owned by uid {} but process is uid {}",
+            path.display(),
+            meta.uid(),
+            expected
+        );
     }
+    if meta.permissions().mode() & 0o177 != 0 {
+        bail!(
+            "token file {} has unsafe permissions {:o}; expected 0600",
+            path.display(),
+            meta.permissions().mode() & 0o777
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn verify_file_ownership(_path: &Path) -> Result<()> {
     Ok(())
 }
 
