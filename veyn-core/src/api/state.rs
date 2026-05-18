@@ -17,6 +17,7 @@ use crate::auth::ScopedToken;
 use crate::baseline::BaselineEngine;
 use crate::config::Config;
 use crate::session::SessionManager;
+use crate::temporal::TemporalEngine;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginInfo {
@@ -64,6 +65,8 @@ pub struct AppState {
     pub session_boundary_tx: broadcast::Sender<SessionBoundary>,
     /// Rolling-window personal baseline engine.
     pub baseline_engine: Arc<Mutex<BaselineEngine>>,
+    /// Sliding-window temporal trend engine.
+    pub temporal_engine: Arc<Mutex<TemporalEngine>>,
     /// Optional SQLite connection for session + event persistence.
     pub db: Option<Arc<Mutex<rusqlite::Connection>>>,
 }
@@ -86,6 +89,7 @@ impl AppState {
         let session_manager =
             Arc::new(Mutex::new(SessionManager::new(session_boundary_tx.clone())));
         let baseline_engine = Arc::new(Mutex::new(BaselineEngine::new()));
+        let temporal_engine = Arc::new(Mutex::new(TemporalEngine::new()));
         let db = db.map(|c| Arc::new(Mutex::new(c)));
 
         Self {
@@ -110,6 +114,7 @@ impl AppState {
             session_manager,
             session_boundary_tx,
             baseline_engine,
+            temporal_engine,
             db,
         }
     }

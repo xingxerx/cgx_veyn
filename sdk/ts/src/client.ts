@@ -11,7 +11,9 @@ import type {
   BaselineStats,
   HealthResponse,
   SubscribeFilter,
+  TemporalSignal,
   WsFilter,
+  WsContextFilter,
 } from "./types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -279,6 +281,20 @@ export class VeynClient {
     );
   }
 
+  // ── Temporal patterns ─────────────────────────────────────────────────────────
+
+  /**
+   * Return the current temporal trend signals for all metrics that have
+   * accumulated enough samples in the sliding 20-minute window.
+   */
+  async getTemporalPatterns(): Promise<TemporalSignal[]> {
+    const result = await fetchJson<{ patterns: TemporalSignal[]; count: number }>(
+      this.url("/v1/temporal/patterns"),
+      { headers: this.headers() }
+    );
+    return result.patterns;
+  }
+
   // ── WebSocket stream ──────────────────────────────────────────────────────────
 
   /**
@@ -409,6 +425,148 @@ export class VeynClient {
     return () => {
       cancelled = true;
       currentSocket?.destroy();
+    };
+  }
+
+  /**
+   * Subscribe to `ContextSnapshot` objects over WebSocket (Semantic tier).
+   *
+   * Returns an object with:
+   * - `unsubscribe()` — closes the connection
+   * - `setFilter(f)` — sends a runtime filter update to the server; the server
+   *    will immediately start applying the new filter without reconnecting.
+   *
+   * Auto-reconnects with 1 s backoff on disconnection or error.
+   */
+  wsSubscribeContext(
+    onSnapshot: (snap: ContextSnapshot) => void,
+    initialFilter?: WsContextFilter
+  ): { unsubscribe: () => void; setFilter: (f: WsContextFilter) => void } {
+    let cancelled = false;
+    let currentSocket: net.Socket | null = null;
+    let pendingFilter: WsContextFilter | null = initialFilter ?? null;
+
+    const wsUrl =
+      this.baseUrl
+        .replace(/^https:\/\//, "wss://")
+        .replace(/^http:\/\//, "ws://") + "/v1/stream";
+
+    const connect = () => {
+      if (cancelled) return;
+
+      const parsed = new url.URL(wsUrl);
+      const isWss = parsed.protocol === "wss:";
+      const lib = isWss ? https : http;
+      const port = parsed.port ? Number(parsed.port) : isWss ? 443 : 80;
+      const wsKey = Buffer.from(Math.random().toString(36)).toString("base64");
+
+      const reqOptions: http.RequestOptions = {
+        hostname: parsed.hostname,
+        port,
+        path: parsed.pathname + parsed.search,
+        method: "GET",
+        headers: {
+          Authorization: this.authHeader,
+          Upgrade: "websocket",
+          Connection: "Upgrade",
+          "Sec-WebSocket-Key": wsKey,
+          "Sec-WebSocket-Version": "13",
+        },
+      };
+
+      const req = lib.request(reqOptions);
+
+      req.on("upgrade", (_res, socket, head) => {
+        currentSocket = socket;
+        let buf = head ? Buffer.from(head) : Buffer.alloc(0);
+
+        // Send initial filter if one was supplied before connect.
+        if (pendingFilter) {
+          sendContextFilter(socket, pendingFilter);
+          pendingFilter = null;
+        }
+
+        socket.on("data", (chunk: Buffer) => {
+          buf = Buffer.concat([buf, chunk]);
+          while (buf.length >= 2) {
+            const firstByte = buf[0];
+            const secondByte = buf[1];
+            const opcode = firstByte & 0x0f;
+            const payloadLen = secondByte & 0x7f;
+
+            let headerLen = 2;
+            let dataLen: number;
+
+            if (payloadLen === 126) {
+              if (buf.length < 4) break;
+              dataLen = buf.readUInt16BE(2);
+              headerLen = 4;
+            } else if (payloadLen === 127) {
+              if (buf.length < 10) break;
+              dataLen = buf.readUInt32BE(6);
+              headerLen = 10;
+            } else {
+              dataLen = payloadLen;
+            }
+
+            if (buf.length < headerLen + dataLen) break;
+
+            const payload = buf.slice(headerLen, headerLen + dataLen);
+            buf = buf.slice(headerLen + dataLen);
+
+            if (opcode === 0x1) {
+              try {
+                const snap = JSON.parse(payload.toString("utf8")) as ContextSnapshot;
+                onSnapshot(snap);
+              } catch {
+                // malformed — skip
+              }
+            } else if (opcode === 0x8) {
+              socket.destroy();
+            }
+          }
+        });
+
+        socket.on("end", () => { if (!cancelled) setTimeout(connect, 1000); });
+        socket.on("error", () => { if (!cancelled) setTimeout(connect, 1000); });
+      });
+
+      req.on("error", () => { if (!cancelled) setTimeout(connect, 1000); });
+      req.end();
+    };
+
+    const sendContextFilter = (socket: net.Socket, f: WsContextFilter) => {
+      const msg = JSON.stringify({
+        type: "subscribe",
+        context_filter: {
+          intents: f.intents,
+          min_confidence: f.minConfidence,
+          source_class: f.sourceClass,
+          exclude_neutral: f.excludeNeutral ?? false,
+        },
+      });
+      const payload = Buffer.from(msg, "utf8");
+      const frame = Buffer.alloc(2 + payload.length);
+      frame[0] = 0x81; // FIN + text opcode
+      frame[1] = payload.length;
+      payload.copy(frame, 2);
+      socket.write(frame);
+    };
+
+    connect();
+
+    return {
+      unsubscribe: () => {
+        cancelled = true;
+        currentSocket?.destroy();
+      },
+      setFilter: (f: WsContextFilter) => {
+        if (currentSocket && !currentSocket.destroyed) {
+          sendContextFilter(currentSocket, f);
+        } else {
+          pendingFilter = f;
+        }
+      },
     };
   }
 }

@@ -63,6 +63,41 @@ impl<'de> Deserialize<'de> for IntentCode {
     }
 }
 
+// ── TemporalTrend / TemporalSignal ────────────────────────────────────────────
+
+/// Direction of change detected over the analysis window.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemporalTrend {
+    /// Change magnitude below threshold — effectively flat.
+    Stable,
+    /// Monotonically increasing slope.
+    Rising,
+    /// Monotonically decreasing slope.
+    Falling,
+    /// Rapid increase concentrated in the final quarter of the window.
+    Spiking,
+    /// Rapid decrease concentrated in the final quarter of the window.
+    Declining,
+    /// Recently rising after a prior falling period — signal rebounding.
+    Recovering,
+}
+
+/// Trend analysis result for a single metric over a sliding time window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalSignal {
+    pub metric: String,
+    pub trend: TemporalTrend,
+    /// Rate of change in metric units per minute.
+    pub slope_per_min: f64,
+    /// Length of the analysis window in seconds.
+    pub window_secs: u32,
+    /// Confidence in the trend (R² of linear fit), 0.0–1.0.
+    pub confidence: f32,
+    /// Number of samples used for this analysis.
+    pub samples: usize,
+}
+
 // ── ContextSnapshot ────────────────────────────────────────────────────────────
 
 /// Semantic context snapshot — the AI-ready world-state summary.
@@ -87,6 +122,9 @@ pub struct ContextSnapshot {
     /// The currently open recording session UUID, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recording_session_id: Option<String>,
+    /// Temporal trend analysis for each metric over the sliding window.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub temporal_patterns: Vec<TemporalSignal>,
 }
 
 // ── StateDelta ─────────────────────────────────────────────────────────────────

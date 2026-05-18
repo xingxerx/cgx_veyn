@@ -7,6 +7,7 @@ mod dispatcher;
 mod presence;
 mod session;
 mod storage;
+mod temporal;
 
 use std::time::Duration;
 

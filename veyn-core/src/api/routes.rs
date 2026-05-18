@@ -70,7 +70,8 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/baseline/:device_id/:metric/history",
             get(baseline_history),
-        );
+        )
+        .route("/v1/temporal/patterns", get(temporal_patterns));
 
     legacy.merge(v1).with_state(state)
 }
@@ -337,10 +338,27 @@ fn effective_tier(state: &AppState, claim: Option<&TokenClaim>) -> ContextTier {
 }
 
 /// Client-to-server message for runtime WebSocket subscription filtering.
+///
+/// Send as JSON text frame after the WS handshake completes.
+///
+/// Raw/Filtered tier — filter raw `VeynEvent` objects:
+/// ```json
+/// { "type": "subscribe", "filter": { "device_class": ["ble"], "metrics": ["heart_rate"] } }
+/// ```
+///
+/// Semantic tier — filter `ContextSnapshot` objects:
+/// ```json
+/// { "type": "subscribe", "context_filter": { "intents": ["stress_response"], "min_confidence": 0.7 } }
+/// ```
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientMessage {
-    Subscribe { filter: WsEventFilter },
+    Subscribe {
+        #[serde(default)]
+        filter: WsEventFilter,
+        #[serde(default)]
+        context_filter: WsContextFilter,
+    },
     Unsubscribe,
 }
 
@@ -368,10 +386,55 @@ impl WsEventFilter {
     }
 }
 
+/// Runtime filter for the Semantic WebSocket tier — applied to each `ContextSnapshot`.
+#[derive(Deserialize, Clone, Default)]
+struct WsContextFilter {
+    /// Only forward snapshots whose `intent_code` is in this list.
+    intents: Option<Vec<String>>,
+    /// Drop snapshots with `confidence` below this threshold.
+    min_confidence: Option<f64>,
+    /// Only retain `state_deltas` from these source classes.
+    source_class: Option<Vec<String>>,
+    /// When true, snapshots with intent_code == "neutral" are suppressed.
+    #[serde(default)]
+    exclude_neutral: bool,
+}
+
+impl WsContextFilter {
+    fn accepts(&self, snap: &ContextSnapshot) -> bool {
+        if let Some(min_conf) = self.min_confidence {
+            if snap.confidence < min_conf {
+                return false;
+            }
+        }
+        if self.exclude_neutral && snap.intent_code == IntentCode::Neutral {
+            return false;
+        }
+        if let Some(intents) = &self.intents {
+            if !intents.is_empty() {
+                let code_str = intent_code_str(&snap.intent_code);
+                if !intents.iter().any(|i| i == code_str) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn filter_snapshot(&self, mut snap: ContextSnapshot) -> ContextSnapshot {
+        if let Some(classes) = &self.source_class {
+            snap.state_deltas
+                .retain(|d| classes.iter().any(|s| s == &d.source_class));
+        }
+        snap
+    }
+}
+
 async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier) {
     let mut rx = state.broadcast_tx.subscribe();
     let mut cx_rx = state.context_broadcast_tx.subscribe();
     let mut filter = WsEventFilter::default();
+    let mut context_filter = WsContextFilter::default();
 
     // For Semantic tier, replay the latest context snapshot instead of raw events.
     if tier == ContextTier::Semantic {
@@ -446,10 +509,14 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier
                     Err(RecvError::Closed) => break,
                 }
             }
-            // ── Semantic tier: stream ContextSnapshots ────────────────────────────────
+            // ── Semantic tier: stream ContextSnapshots (with optional filter) ─────────
             result = cx_rx.recv(), if tier == ContextTier::Semantic => {
                 match result {
                     Ok(snapshot) => {
+                        if !context_filter.accepts(&snapshot) {
+                            continue;
+                        }
+                        let snapshot = context_filter.filter_snapshot(snapshot);
                         let json = match serde_json::to_string(&snapshot) {
                             Ok(j) => j,
                             Err(_) => continue,
@@ -472,11 +539,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                             match client_msg {
-                                ClientMessage::Subscribe { filter: f } => {
+                                ClientMessage::Subscribe { filter: f, context_filter: cf } => {
                                     filter = f;
+                                    context_filter = cf;
                                 }
                                 ClientMessage::Unsubscribe => {
                                     filter = WsEventFilter::default();
+                                    context_filter = WsContextFilter::default();
                                 }
                             }
                         }
@@ -917,6 +986,7 @@ fn build_snapshot_from_metrics(state: &AppState) -> ContextSnapshot {
         state_deltas: deltas,
         baseline_delta: None,
         recording_session_id,
+        temporal_patterns: vec![],
     }
 }
 
@@ -997,6 +1067,14 @@ async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse 
         )],
         text,
     )
+}
+
+// ── GET /v1/temporal/patterns ─────────────────────────────────────────────────
+
+async fn temporal_patterns(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let patterns = state.temporal_engine.lock().unwrap().get_patterns();
+    let count = patterns.len();
+    Json(json!({ "patterns": patterns, "count": count }))
 }
 
 // ── GET /openapi.yaml ──────────────────────────────────────────────────────────
