@@ -12,7 +12,7 @@ BLE / EEG / MIDI / HID / Serial / Filesystem / WASM Plugins
      REST API       WebSocket       SSE stream
     /v1/context    /stream        /v1/stream/sse
           ↓              ↓              ↓
-   AI Agents    TypeScript SDK    Python SDK    MCP (Claude)
+   AI Agents    TypeScript SDK    Python SDK    MCP (Local)
 ```
 
 ---
@@ -27,7 +27,7 @@ VEYN is a 6-crate Cargo workspace:
 | `veyn-adapters` | Signal adapters: BLE, EEG/OSC, HealthKit relay, evdev, hidraw, MIDI, serial, filesystem, MQTT, mock |
 | `veyn-core` | Daemon: event bus, `CompressionEngine`, `BaselineEngine`, `SessionManager`, SQLite storage, REST/WS/SSE API |
 | `veyn-plugins` | WASM plugin host (wasmtime), device proxy layer, signature verification |
-| `veyn-mcp` | MCP server — exposes VEYN tools to Claude and compatible agents |
+| `veyn-mcp` | MCP server — exposes VEYN tools to local AI agents (Open WebUI, Jan.ai, etc.) |
 | `sdk/` | TypeScript SDK (`sdk/ts/`), Python SDK (`sdk/py/`), Rust guest plugin SDK |
 
 ---
@@ -252,7 +252,7 @@ The integration test suite spins up the daemon in mock mode, injects known metri
 
 ## MCP Integration
 
-`veyn-mcp` exposes VEYN as an MCP server for Claude and compatible agents. Available tools: `veyn_get_context`, `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`.
+`veyn-mcp` exposes VEYN as an MCP server for local AI agents. Works with any MCP-compatible client (Open WebUI, Jan.ai, etc.) running a local model such as Gemma 4 via Ollama. Available tools: `veyn_get_context`, `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`.
 
 ---
 

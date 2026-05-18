@@ -1,12 +1,14 @@
-# OpenAI Function Calling Integration
+# Gemma 4 Tool Calling Integration (via Ollama)
 
-Expose VEYN's context to a GPT-4 / GPT-4o agent using OpenAI's function-calling
-(tool use) API so the model can query physiological state on demand.
+Expose VEYN's context to a Gemma 4 agent using Ollama's tool-calling API so the
+model can query physiological state on demand — fully local, no cloud required.
 
 ## Prerequisites
 
 - VEYN daemon running (`cargo run -p veyn-core -- --mock`)
-- Python 3.10+: `pip install veyn-sdk openai`
+- [Ollama](https://ollama.ai) installed and running
+- Gemma 4 pulled: `ollama pull gemma4`
+- Python 3.10+: `pip install veyn-sdk ollama`
 
 ## Tool definitions
 
@@ -50,11 +52,13 @@ VEYN_TOOLS = [
 ## Agent loop
 
 ```python
-import asyncio, json, openai
+import asyncio, json
+import ollama
 from veyn import VeynClient
 
 VEYN_HOST  = "http://localhost:7700"
 VEYN_TOKEN = open("/home/.local/share/veyn/token").read().strip()
+MODEL      = "gemma4"
 
 async def dispatch_tool(client: VeynClient, name: str, args: dict) -> str:
     if name == "veyn_get_context":
@@ -70,7 +74,6 @@ async def dispatch_tool(client: VeynClient, name: str, args: dict) -> str:
     return json.dumps({"error": f"unknown tool {name}"})
 
 async def run_agent(user_query: str):
-    oai = openai.AsyncOpenAI()
     async with VeynClient(VEYN_HOST, token=VEYN_TOKEN) as client:
         messages = [
             {
@@ -86,29 +89,27 @@ async def run_agent(user_query: str):
         ]
 
         while True:
-            resp = await oai.chat.completions.create(
-                model="gpt-4o",
+            resp = ollama.chat(
+                model=MODEL,
                 messages=messages,
                 tools=VEYN_TOOLS,
-                tool_choice="auto",
             )
-            msg = resp.choices[0].message
+            msg = resp["message"]
             messages.append(msg)
 
-            if not msg.tool_calls:
-                print(msg.content)
+            if not msg.get("tool_calls"):
+                print(msg["content"])
                 break
 
-            for call in msg.tool_calls:
+            for call in msg["tool_calls"]:
                 result = await dispatch_tool(
                     client,
-                    call.function.name,
-                    json.loads(call.function.arguments or "{}"),
+                    call["function"]["name"],
+                    call["function"].get("arguments") or {},
                 )
                 messages.append({
-                    "role":         "tool",
-                    "tool_call_id": call.id,
-                    "content":      result,
+                    "role":    "tool",
+                    "content": result,
                 })
 
 asyncio.run(run_agent("Should I make this big decision right now?"))
@@ -116,34 +117,41 @@ asyncio.run(run_agent("Should I make this big decision right now?"))
 
 ## TypeScript / Node.js variant
 
+Uses Ollama's built-in OpenAI-compatible endpoint — no extra SDK needed:
+
 ```typescript
-import OpenAI from "openai";
 import { VeynClient } from "veyn-sdk";
 
-const client = new VeynClient("http://localhost:7700", { token: process.env.VEYN_TOKEN! });
-const oai    = new OpenAI();
+const VEYN_HOST  = "http://localhost:7700";
+const VEYN_TOKEN = process.env.VEYN_TOKEN!;
+const MODEL      = "gemma4";
 
+const client  = new VeynClient(VEYN_HOST, { token: VEYN_TOKEN });
 const ctx     = await client.getContext();
 const message = `Current physiological state: ${JSON.stringify(ctx, null, 2)}\n\nUser: Should I send that email now?`;
 
-const resp = await oai.chat.completions.create({
-  model:    "gpt-4o",
-  messages: [{ role: "user", content: message }],
+const resp = await fetch("http://localhost:11434/v1/chat/completions", {
+  method:  "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model:    MODEL,
+    messages: [{ role: "user", content: message }],
+  }),
 });
 
-console.log(resp.choices[0].message.content);
+const data = await resp.json();
+console.log(data.choices[0].message.content);
 await client.close();
 ```
 
 ## Privacy note
 
-Use `tier:semantic` token scope so the function-calling layer only receives
-`ContextSnapshot` objects — never raw HID input. This ensures OpenAI's API
-never receives keystroke-level data.
+Use `tier:semantic` token scope so the tool-calling layer only receives
+`ContextSnapshot` objects — never raw HID input.
 
 ```bash
 # Generate a semantic-tier token
 cat >> ~/.local/share/veyn/tokens.json << 'EOF'
-[{"token": "gpt-agent-token", "label": "openai-agent", "scopes": ["read", "tier:semantic"]}]
+[{"token": "gemma-agent-token", "label": "gemma4-agent", "scopes": ["read", "tier:semantic"]}]
 EOF
 ```

@@ -176,7 +176,7 @@ complete before Phase 9 begins.
 - [x] Agent Handshake Protocol — Bearer token + tier scope + declarative SSE filter DSL
 - [x] `GET /v1/context/subscribe` with declarative filter DSL (`?intents=`, `?min_confidence=`, `?source_class=`)
 - [x] `context_tier` config: `raw` | `filtered` | `semantic` — token scope `tier:<value>`, daemon default via `veyn.toml` and `VEYN_CONTEXT_TIER`
-- [x] Integration guides: Claude via `veyn-mcp`, Ollama, OpenAI function calling (`docs/integrations/`)
+- [x] Integration guides: local MCP clients via `veyn-mcp`, Ollama (Gemma 4), Gemma 4 tool calling (`docs/integrations/`)
 - [x] Prometheus metrics at `GET /metrics`
 
 -----

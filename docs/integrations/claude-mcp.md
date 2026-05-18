@@ -1,7 +1,7 @@
-# Claude via veyn-mcp
+# Local AI via veyn-mcp (MCP)
 
 VEYN ships `veyn-mcp`, a Model Context Protocol server that exposes the daemon's
-context stream to Claude and other MCP-compatible AI agents.
+context stream to any MCP-compatible local AI client (Open WebUI, Jan.ai, etc.).
 
 ## What it provides
 
@@ -33,7 +33,13 @@ VEYN_TOKEN=<token> cargo run --release -p veyn-mcp
 
 By default the MCP server connects to `http://localhost:7700`.
 
-### 3. Add to Claude Desktop (`~/.config/claude/claude_desktop_config.json`)
+### 3. Connect a local MCP-compatible client
+
+`veyn-mcp` speaks JSON-RPC 2.0 over stdio — any MCP-compatible client works.
+
+#### Open WebUI (free, self-hosted, works with Ollama + Gemma 4)
+
+Add to your Open WebUI `mcpServers` config (Settings → Tools → MCP Servers):
 
 ```json
 {
@@ -42,14 +48,34 @@ By default the MCP server connects to `http://localhost:7700`.
       "command": "/path/to/veyn-mcp",
       "env": {
         "VEYN_TOKEN": "<your-token>",
-        "VEYN_HOST": "http://localhost:7700"
+        "VEYN_HOST":  "http://localhost:7700"
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop. VEYN tools will appear in the toolbox.
+#### Jan.ai (free, local)
+
+Add to Jan's MCP config (`~/jan/settings/mcp.json`):
+
+```json
+{
+  "servers": {
+    "veyn": {
+      "command": "/path/to/veyn-mcp",
+      "args": [],
+      "env": {
+        "VEYN_TOKEN": "<your-token>",
+        "VEYN_HOST":  "http://localhost:7700"
+      }
+    }
+  }
+}
+```
+
+Restart the client. VEYN tools will appear in the toolbox when using Gemma 4 or
+any other locally-running model.
 
 ## Example agent prompt
 
@@ -73,7 +99,7 @@ to `ContextSnapshot` output only (no raw HID events):
 [
   {
     "token": "<generated-token>",
-    "label": "claude-agent",
+    "label": "local-agent",
     "scopes": ["read", "tier:semantic"]
   }
 ]

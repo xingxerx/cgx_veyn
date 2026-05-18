@@ -2,7 +2,7 @@
 name        = "veyn-mcp"
 version     = "0.1.0"
 edition     = "2021"
-description = "MCP stdio server — exposes VEYN daemon as tools for Claude and other LLM agents"
+description = "MCP stdio server — exposes VEYN daemon as tools for local AI agents (Open WebUI, Jan.ai, Gemma 4 via Ollama)"
 
 [[bin]]
 name = "veyn-mcp"

@@ -115,7 +115,7 @@ fail or panic at runtime.
 - [x] ✅ Design and document the **Agent Handshake Protocol** — Bearer token auth + `tier:semantic` scope + SSE/WebSocket subscription with filter DSL
 - [x] ✅ Add `GET /v1/context/subscribe` with declarative filter DSL — `?intents=neutral,stress_response&min_confidence=0.7&source_class=ble`; returns filtered SSE stream
 - [x] ✅ Add `context_tier` config option: `raw` | `filtered` | `semantic` — tokens declare ceiling via `tier:<value>` scope; WebSocket enforces tier per-connection; configurable via `veyn.toml` and `VEYN_CONTEXT_TIER` env var
-- [x] ✅ Document recommended integration patterns for: Claude via `veyn-mcp` (`docs/integrations/claude-mcp.md`), local Ollama agents (`docs/integrations/ollama.md`), OpenAI function calling (`docs/integrations/openai-function-calling.md`)
+- [x] ✅ Document recommended integration patterns for: local MCP clients via `veyn-mcp` (`docs/integrations/claude-mcp.md`), local Ollama agents with Gemma 4 (`docs/integrations/ollama.md`), Gemma 4 tool calling (`docs/integrations/gemma4-tool-calling.md`)
 
 -----
 

@@ -6,7 +6,7 @@ a local Ollama model — no cloud required.
 ## Prerequisites
 
 - VEYN daemon running (`cargo run -p veyn-core -- --mock`)
-- [Ollama](https://ollama.ai) installed (`ollama pull llama3`)
+- [Ollama](https://ollama.ai) installed (`ollama pull gemma4`)
 - Python 3.10+ with `pip install veyn-sdk ollama`
 
 ## Python agent example
@@ -19,7 +19,7 @@ from veyn import VeynClient
 
 VEYN_HOST  = "http://localhost:7700"
 VEYN_TOKEN = open("/home/.local/share/veyn/token").read().strip()
-MODEL      = "llama3"
+MODEL      = "gemma4"
 
 SYSTEM_PROMPT = """You are a decision-support assistant.
 You receive a physiological context snapshot from the user's wearable sensors.
@@ -69,11 +69,11 @@ async def stream_agent():
 
 ## Recommended models
 
-| Use case              | Model                    | Notes                             |
-|-----------------------|--------------------------|-----------------------------------|
-| General decision help | `llama3`                 | Good balance of speed and quality |
-| Concise status alerts | `phi3:mini`              | Fast, low memory                  |
-| Medical framing       | `medllama2` (community)  | Healthcare-aware vocabulary       |
+| Use case              | Model          | Notes                                    |
+|-----------------------|----------------|------------------------------------------|
+| General decision help | `gemma4`       | Best reasoning, recommended default      |
+| Concise status alerts | `gemma4:2b`    | Fast, low memory footprint               |
+| Balanced performance  | `gemma4:9b`    | Good quality/speed tradeoff              |
 
 ## Context tier for privacy
 
