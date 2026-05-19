@@ -28,7 +28,13 @@ pub async fn run(state: AppState, event_tx: mpsc::Sender<VeynEvent>, timeout_mil
         ticker.tick().await;
 
         let now = Utc::now().timestamp_millis();
-        let devices: Vec<VeynDevice> = state.devices.lock().unwrap().values().cloned().collect();
+        let devices: Vec<VeynDevice> = state
+            .devices
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
 
         for device in &devices {
             let new_state = if now - device.last_seen < timeout_millis {
@@ -40,7 +46,12 @@ pub async fn run(state: AppState, event_tx: mpsc::Sender<VeynEvent>, timeout_mil
             let prev = local.get(&device.id);
             if prev == Some(&new_state) {
                 // No transition — just refresh last_seen in the shared map.
-                if let Some(info) = state.presence.lock().unwrap().get_mut(&device.id) {
+                if let Some(info) = state
+                    .presence
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(&device.id)
+                {
                     info.last_seen = device.last_seen;
                 }
                 continue;
@@ -64,15 +75,19 @@ pub async fn run(state: AppState, event_tx: mpsc::Sender<VeynEvent>, timeout_mil
             );
             let _ = event_tx.send(event).await;
 
-            state.presence.lock().unwrap().insert(
-                device.id.clone(),
-                PresenceInfo {
-                    device_id: device.id.clone(),
-                    state: new_state.clone(),
-                    last_seen: device.last_seen,
-                    since_ts: now,
-                },
-            );
+            state
+                .presence
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(
+                    device.id.clone(),
+                    PresenceInfo {
+                        device_id: device.id.clone(),
+                        state: new_state.clone(),
+                        last_seen: device.last_seen,
+                        since_ts: now,
+                    },
+                );
 
             local.insert(device.id.clone(), new_state);
         }
