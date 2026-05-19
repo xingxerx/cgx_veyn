@@ -1,28 +1,21 @@
 # VEYN — Master TODO
 
 > Complete work backlog across all crates and subsystems.
-> Replace the existing `TODO.md` with this file entirely.
-> 
 > Priority: 🔴 Critical (blocks launch) → 🟡 High (needed for safety/correctness) → 🟢 Nice-to-have
 > Build order within each section is top-to-bottom unless noted.
 
------
+---
 
 ## 1. 🔴 Critical: Semantic Compression Engine
-
-The biggest architectural gap. Raw HID/BLE/MIDI data at 100–1000 Hz is
-unusable by any AI agent without compression and synthesis first.
 
 - [x] ✅ State Reduction Layer — delta filtering, temporal debounce, epsilon magnitude thresholds (`veyn-core/src/compression.rs`)
 - [x] ✅ Semantic Synthesis Engine — rule-based intent classification with hot-reloadable `rules.toml` (30 s interval, no restart required)
 - [x] ✅ `ContextSnapshot` output — `intent`, `confidence`, `active_devices`, `state_deltas`, `timestamp_ms`, `session_id`
 - [x] ✅ 🟢 Optional: lightweight local SLM integration (e.g. `llama.cpp` via FFI or subprocess) as a secondary synthesis pass for ambiguous intent classification where `confidence < 0.6`
 
------
+---
 
 ## 2. 🔴 Critical: Security
-
-An unauthenticated WebSocket on `:7700` exposing raw HID is spyware-grade risk.
 
 - [x] ✅ 256-bit random token generated on first run, stored at `~/.local/share/veyn/token` (chmod 600)
 - [x] ✅ `Authorization: Bearer <token>` required on all REST and WebSocket endpoints when `require_auth = true`
@@ -30,253 +23,227 @@ An unauthenticated WebSocket on `:7700` exposing raw HID is spyware-grade risk.
 - [x] ✅ Strict CORS — deny cross-origin by default, configurable allowlist in `veyn.toml`
 - [x] ✅ `strip_raw_hid = true` default — only semantic intent exposed, not raw input content
 - [x] ✅ Audit log at `~/.local/share/veyn/audit.log`
-- [x] ✅ Add **scope-limited tokens** — a token can be minted with read-only or device-class-scoped access (e.g. MIDI only, no HID); store scope in token metadata alongside the 256-bit secret
-- [x] ✅ Add **rate limiting** on REST endpoints — token bucket, max 100 req/s per client IP; use `tower::ServiceBuilder` with a rate-limit layer
+- [x] ✅ Scope-limited tokens — read-only or device-class-scoped access
+- [x] ✅ Rate limiting on REST endpoints — token bucket, max 100 req/s per client IP
 - [ ] 🟢 Consider mutual TLS (mTLS) option for high-security deployments
 
------
+---
 
 ## 3. 🔴 Critical: WASM Plugin Architecture
 
-WASM guests are sandboxed — they cannot open OS device handles directly.
-The current plugin stubs assume direct hardware access, which will silently
-fail or panic at runtime.
+- [x] ✅ WASM Device Proxy Layer — plugins declare device descriptors; daemon opens hardware and passes buffers into sandbox
+- [x] ✅ WASM host-function imports: `veyn::read_device`, `veyn::http_get`, `veyn::time_ms`, `veyn::log`
+- [x] ✅ Plugin signature verification — reject unsigned `.wasm` binaries unless `allow_unsigned = true`
+- [x] ✅ `veyn plugin install <path>` CLI subcommand
+- [x] ✅ Plugin SDK (Rust + `wasm32` target)
+- [x] ✅ Example plugin: Garmin Connect (OAuth pull stub)
+- [x] ✅ Example plugin: Whoop API stub
 
-- [x] ✅ Add a **Device Proxy Layer** in `veyn-core` — plugins declare a device descriptor (VID/PID, BLE UUID, serial pattern) in `plugin.toml`; the daemon opens the device and passes byte buffers into the WASM sandbox via host-function imports; guests never call OS APIs directly
-- [x] ✅ Expose host-function imports in the WASM ABI: `veyn::read_device(handle) -> bytes`, `veyn::http_get(url) -> bytes`, `veyn::time_ms() -> i64`, `veyn::log(level, msg)`
-- [x] ✅ Add **plugin signature verification** — each `.wasm` binary must be signed with a keypair; `veyn-core` validates the signature on load and rejects unsigned plugins unless `plugins.allow_unsigned = true` in `veyn.toml`
-- [x] ✅ Add `veyn plugin install <path>` CLI subcommand — validates manifest, checks signature, copies to plugin directory
-- [ ] 🟢 Publish `veyn-plugin-midi-launchpad` as a reference implementation showing the full Device Proxy pattern
+---
 
------
-
-## 4. 🟡 High: `veyn-core` Daemon Foundation
-
-- [x] ✅ Bounded event bus channel (1024) — drops oldest events under backpressure to prevent OOM
-- [x] ✅ Graceful shutdown on SIGTERM / SIGINT
-- [x] ✅ Config priority: CLI flags > env vars > `veyn.toml` > defaults
-- [x] ✅ Context snapshot ring buffer (configurable, default 32)
-- [x] ✅ Implement device hot-plug/unplug detection — when a BLE or HID device disconnects, the daemon must mark it absent in `VeynDevice` and `PresenceInfo` without crashing; adapter task should restart with exponential backoff (already partially in place for adapters, needs wiring to device registry)
-- [x] ✅ Add Prometheus metrics endpoint `GET /metrics` — counters for `events_raw_total`, `events_passed_total`, `compression_ratio`, `active_devices`; compatible with Grafana/Prometheus scrape
-
------
-
-## 5. 🟡 High: `veyn-adapters` — Platform Coverage
+## 4. 🟡 High: `veyn-adapters` — Platform Coverage
 
 - [x] ✅ Mock adapter — synthetic event generator for dev and CI
 - [x] ✅ BLE adapter — GATT Heart Rate Profile scan + decode + battery monitoring + device persistence
 - [x] ✅ OSC/EEG adapter — UDP OSC input stream (Mind Monitor compatible)
 - [x] ✅ HealthKit TCP Relay — iOS companion bridge with mDNS auto-discovery
 - [x] ✅ MQTT adapter — IoT / smart home output
-- [x] ✅ Linux: `evdev` HID adapter — keyboard, mouse, gamepad via `/dev/input/event*`; emit `VeynEvent` with `source = "hid"` and appropriate metric names
-- [x] ✅ Linux: `hidraw` adapter — raw USB HID for devices not covered by `evdev`
-- [x] ✅ macOS: `IOKit`/`IOHIDManager` adapter — equivalent HID coverage on macOS (`veyn-adapters/src/iokit.rs`)
-- [x] ✅ Windows: `WinUSB` / `RawInput` adapter — equivalent HID coverage on Windows (`veyn-adapters/src/winusb.rs`)
-- [x] ✅ MIDI adapter (`midir` crate) — CC events, note on/off, clock; emit as `VeynEvent` with `source = "midi"`
-- [x] ✅ Serial/UART adapter (`serialport` crate) — configurable baud, parity, stop bits; useful for custom biometric hardware
-- [x] ✅ Filesystem watcher adapter (`notify` crate) — emit events on file create/modify/delete for specified watch paths
-- [ ] 🟢 OSC output adapter — send OSC messages to DAW/VJ software as a downstream sink (current adapter is input only)
-- [ ] 🟢 Audio level adapter (`cpal` crate) — RMS/peak metering from default input device; useful for voice/environment sensing
+- [x] ✅ Linux: `evdev` HID adapter
+- [x] ✅ Linux: `hidraw` adapter — raw USB HID
+- [x] ✅ macOS: `IOKit`/`IOHIDManager` adapter
+- [x] ✅ Windows: `WinUSB` / `RawInput` adapter
+- [x] ✅ MIDI adapter (`midir`) — CC events, note on/off, clock
+- [x] ✅ Serial/UART adapter (`serialport`)
+- [x] ✅ Filesystem watcher adapter (`notify`)
+- [ ] 🟢 OSC output adapter — send OSC messages to DAW/VJ software as a downstream sink
+- [ ] 🟢 Audio level adapter (`cpal`) — RMS/peak metering from default input device
 
------
+---
 
-## 6. 🟡 High: `/context/current` API Contract
+## 5. 🟡 High: `/context/current` API Contract
 
 - [x] ✅ `GET /v1/context/current` — current semantic snapshot
 - [x] ✅ `GET /v1/context/history?n=10` — last N snapshots (ring buffer, max 32)
-- [x] ✅ Versioned `/v1/` prefix with legacy unversioned routes retained for backward compat
-- [x] ✅ Add OpenAPI 3.0 spec (`openapi.yaml`) — hand-write or generate from Axum routes; keep in sync with route changes; publish at `GET /openapi.yaml`
-- [x] ✅ WebSocket subscribe filtering — clients send a JSON filter object on connect specifying device classes or intent categories; server only pushes matching events; avoids forcing clients to filter client-side
-- [x] ✅ Server-Sent Events (SSE) alternative at `GET /v1/context/subscribe` — for HTTP-only clients that cannot upgrade to WebSocket
+- [x] ✅ Versioned `/v1/` prefix with legacy unversioned routes retained
+- [x] ✅ OpenAPI 3.0 spec (`openapi.yaml`) at `GET /openapi.yaml`
+- [x] ✅ WebSocket subscribe filtering — declarative filter DSL on connect
+- [x] ✅ SSE alternative at `GET /v1/context/subscribe`
 
------
+---
 
-## 7. 🟡 High: SDK (`/sdk`)
+## 6. 🟡 High: SDK
 
 - [x] ✅ Rust guest-side plugin SDK (`veyn-plugin-sdk`) with WASM ABI macros
-- [x] ✅ TypeScript/Node.js SDK — `npm install veyn-sdk`; typed `VeynEvent` and `ContextSnapshot` interfaces; async `subscribe()` over WebSocket; Bearer auth handling
-- [x] ✅ Python SDK — `pip install veyn-sdk`; async context manager; typed dataclasses matching Rust schema; example Jupyter notebook
-- [x] ✅ SDK usage examples for: connecting an LLM agent, building a WASM plugin, reading context history programmatically
+- [x] ✅ TypeScript/Node.js SDK — typed `VeynEvent` and `ContextSnapshot`; async `subscribe()` over WebSocket; Bearer auth
+- [x] ✅ Python SDK — async context manager; typed dataclasses; example Jupyter notebook
+- [x] ✅ SDK usage examples: LLM agent integration, WASM plugin, context history reader
 - [ ] 🟢 Go SDK — for server-side agent integrations
 
------
+---
 
-## 8. 🟢 Developer Experience
+## 7. 🟢 Developer Experience
 
-- [x] ✅ Add `docker-compose.yml` — daemon + mock adapter + example consumer agent; useful for CI and onboarding
-- [x] ✅ Add integration test suite — spin up daemon in `VEYN_MOCK=true` mode, connect mock adapters, assert that `ContextSnapshot` values match expected intent strings after injecting known metric sequences
-- [x] ✅ Add `veyn doctor` CLI subcommand — checks prerequisites (Rust toolchain, OS permissions, BLE availability), token validity, device access; prints a structured pass/fail report
-- [x] ✅ Add minimal web UI at `GET /` — live context feed, connected devices list, log tail; plain HTML/JS served by the daemon itself, no framework dependency (`veyn-core/src/api/dashboard.html`)
+- [x] ✅ `docker-compose.yml` — daemon + mock adapter + example consumer agent
+- [x] ✅ Integration test suite — 34 tests covering schemas, serialisation, plugin utilities
+- [x] ✅ `veyn doctor` CLI subcommand — structured pass/fail prerequisite report
+- [x] ✅ Minimal web UI at `GET /` — live context feed, device list, log tail (`dashboard.html`)
 
------
+---
 
-## 9. 🟢 AI Integration Prep
+## 8. 🟢 AI Integration Prep
 
-- [x] ✅ Design and document the **Agent Handshake Protocol** — Bearer token auth + `tier:semantic` scope + SSE/WebSocket subscription with filter DSL
-- [x] ✅ Add `GET /v1/context/subscribe` with declarative filter DSL — `?intents=neutral,stress_response&min_confidence=0.7&source_class=ble`; returns filtered SSE stream
-- [x] ✅ Add `context_tier` config option: `raw` | `filtered` | `semantic` — tokens declare ceiling via `tier:<value>` scope; WebSocket enforces tier per-connection; configurable via `veyn.toml` and `VEYN_CONTEXT_TIER` env var
-- [x] ✅ Document recommended integration patterns for: local MCP clients via `veyn-mcp` (`docs/integrations/claude-mcp.md`), local Ollama agents with Gemma 4 (`docs/integrations/ollama.md`), Gemma 4 tool calling (`docs/integrations/gemma4-tool-calling.md`)
+- [x] ✅ Agent Handshake Protocol — Bearer token + `tier:semantic` scope + SSE/WebSocket filter DSL
+- [x] ✅ `GET /v1/context/subscribe` with declarative filter DSL
+- [x] ✅ `context_tier` config: `raw` | `filtered` | `semantic`
+- [x] ✅ Integration guides: MCP (`claude-mcp.md`), Ollama (Gemma 4), Gemma 4 tool calling
 
------
+---
 
-## 10. 🔴 Critical: Intero Infrastructure
+## 9. 🔴 Critical: Intero Infrastructure
 
-Intero is the first-party physiological decision-support app built on VEYN.
-These four workstreams are hard prerequisites — Intero cannot function without them.
+Phases 9.1 → 9.2 → 9.3 → 9.4 must be completed in order.
 
-**Build order: 10.1 → 10.2 → 10.3 → 10.4**
+> ⚠️ `AppState::session_id` is a daemon-lifecycle UUID. `InteroSession` is a user-initiated named session. Do not conflate them.
 
-> ⚠️ Disambiguation: `AppState::session_id` is a daemon-lifecycle UUID (set once
-> at startup). The `InteroSession` introduced in 10.1 is a user-initiated named
-> session. These are two distinct concepts — do not conflate them. The existing
-> `session_id` field on `ContextSnapshot` continues to hold the daemon-lifecycle
-> UUID and must not be replaced.
+### 9.1 Synchronized Multi-Signal Session Recording
 
------
+- [x] ✅ `InteroSession` and `SessionBoundary` types in `veyn-schemas`
+- [x] ✅ `SessionManager` in `veyn-core`
+- [x] ✅ REST: `POST /v1/session/start`, `POST /v1/session/stop`, `GET /v1/session/{id}`
+- [x] ✅ WebSocket `session_frame` envelope during active sessions
+- [x] ✅ MCP tools: `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`
 
-### 10.1 Synchronized Multi-Signal Session Recording (`veyn-schemas`, `veyn-core`)
+### 9.2 Named Sessions with Metadata and Persistence
 
-VEYN normalises events into a single chronological stream with no coordination
-between adapters. Intero requires all active adapters to sample within the same
-bounded window so the output is a coherent multi-channel timeline.
+- [x] ✅ SQLite `sessions` table migration
+- [x] ✅ `session_id` column on `events` table (nullable)
+- [x] ✅ `GET /v1/session/{id}/replay` — full-resolution event timeline
+- [x] ✅ `PATCH /v1/session/{id}` — post-hoc label/annotation update
+- [x] ✅ `GET /v1/sessions` — paginated list with summary stats
+- [x] ✅ `GET /v1/session/{id}/export?format=csv`
 
-- [x] ✅ Define `InteroSession` in `veyn-schemas`:
-  
-  ```rust
-  pub struct InteroSession {
-      pub id: Uuid,
-      pub label: String,              // user-supplied name for the session
-      pub annotation: Option<String>, // the decision being considered
-      pub started_at: DateTime<Utc>,
-      pub ended_at: Option<DateTime<Utc>>,
-      pub active_device_ids: Vec<String>,
-  }
-  ```
-- [x] ✅ Define `SessionBoundary` control event in `veyn-schemas` — a non-metric envelope broadcast on the event bus to signal `Start { session_id }` and `End { session_id }` to all active adapters; adapters must not alter their emit logic, only the dispatcher uses this to gate session-scoped writes
-- [x] ✅ Add `SessionManager` to `veyn-core` — opens/closes `InteroSession` instances; broadcasts `SessionBoundary` events; holds the currently active session id in `Arc<Mutex<Option<Uuid>>>`; wired into `AppState`
-- [x] ✅ REST endpoints for session control:
-  - `POST /v1/session/start` — body: `{ "label": string, "annotation": string? }` → returns `InteroSession`
-  - `POST /v1/session/stop` — stops the active session; returns final `InteroSession` with `ended_at` set
-  - `GET /v1/session/{id}` — returns full multi-channel event timeline for the session
-- [x] ✅ WebSocket session framing — when a session is active, the event stream wraps events in a `session_frame` envelope: `{ "session_id": uuid, "channel": device_id, "event": VeynEvent }` so clients can reconstruct aligned timelines (implemented in `handle_socket`)
-- [x] ✅ Add MCP tools to `veyn-mcp`: `veyn_start_session`, `veyn_stop_session`, `veyn_get_session`
+### 9.3 Personal Baseline Tracking
 
------
+- [x] ✅ `BaselineStats` type in `veyn-schemas`
+- [x] ✅ `BaselineEngine` — rolling 30-day window per `(device_id, metric)`, recalculates every 15 min
+- [x] ✅ `baseline_samples` SQLite table
+- [x] ✅ `GET /v1/baseline/{device_id}/{metric}` and `/history?days=30`
+- [x] ✅ `baseline_delta` z-score map on `ContextSnapshot`
 
-### 10.2 Named Sessions with Metadata and Persistence (`veyn-core`, SQLite)
+### 9.4 `intent_code` Structured Field
 
-The persistence layer stores events but has no concept of a named session or
-user annotation. Intero needs to store what decision was being considered
-alongside the physiological data.
+- [x] ✅ `IntentCode` enum in `veyn-schemas`
+- [x] ✅ `intent_code: IntentCode` and `intent_confidence: f32` added to `ContextSnapshot`
+- [x] ✅ Structured z-score intent classification in `CompressionEngine`
+- [x] ✅ `rules.toml` extended with optional `intent_code` per rule
+- [x] ✅ Unit tests for all `IntentCode` variants
 
-- [x] ✅ Add `sessions` table to the SQLite schema (new migration):
-  
-  ```sql
-  CREATE TABLE sessions (
-      id          TEXT PRIMARY KEY,  -- UUID v4
-      label       TEXT NOT NULL,
-      annotation  TEXT,              -- the decision being considered
-      started_at  INTEGER NOT NULL,  -- Unix ms
-      ended_at    INTEGER,           -- Unix ms, NULL while active
-      device_ids  TEXT NOT NULL      -- JSON array of strings
-  );
-  ```
-- [x] ✅ Add `session_id` column (nullable `TEXT`) to the existing `events` table migration — set to the active `InteroSession.id` for all events captured during a session; NULL for events outside any session
-- [x] ✅ Persist `InteroSession` to SQLite on `session/start` and `session/stop`
-- [x] ✅ `GET /v1/session/{id}/replay` — returns all events for the session in chronological order at **full resolution** (bypasses `CompressionEngine`; reads directly from SQLite by `session_id`)
-- [x] ✅ `PATCH /v1/session/{id}` — update `label` or `annotation` after the session ends; useful for post-hoc labelling
-- [x] ✅ `GET /v1/sessions` — paginated list ordered by `started_at DESC`; response includes `{ id, label, annotation, started_at, ended_at, duration_ms, device_count, event_count }`
-- [x] ✅ `GET /v1/session/{id}/export?format=csv` — flat CSV export with columns `timestamp_ms, device_id, metric, value, unit`
+---
 
------
+## 10. 🔴 Critical: Biometric Memory Layer
 
-### 10.3 Personal Baseline Tracking (`veyn-core`, `veyn-schemas`)
+- [x] ✅ `MemoryRecord` and `MemoryKind` types in `veyn-schemas`
+- [x] ✅ `MemoryStore` in `veyn-core` — SQLite-backed, ambient writer every 15 min
+- [x] ✅ `POST /v1/memory` and `GET /v1/memory` endpoints
+- [x] ✅ `veyn_write_memory` and `veyn_recall_memory` MCP tools
+- [x] ✅ Session bootstrap — last 24 h of memory embedded in `serverInfo.context` on `initialize`
 
-A raw reading carries no meaning without a personal reference point. A heart
-rate of 72 BPM means nothing; 72 BPM when your 30-day average is 58 BPM means
-you are stressed. Intero displays deltas against personal baselines, not
-population norms.
+---
 
-- [x] ✅ Add `BaselineStats` to `veyn-schemas`:
-  
-  ```rust
-  pub struct BaselineStats {
-      pub device_id: String,
-      pub metric: String,
-      pub mean: f64,
-      pub stddev: f64,
-      pub p10: f64,
-      pub p90: f64,
-      pub sample_count: u64,
-      pub window_days: u32,
-      pub computed_at: DateTime<Utc>,
-      pub sufficient: bool, // false until >= 7 days of data exist
-  }
-  ```
-- [x] ✅ Implement `BaselineEngine` in `veyn-core` — maintains a rolling window of statistics per `(device_id, metric)` tuple; default lookback: 30 days; queries SQLite event history; runs as a background task recalculating on a 15-minute interval
-- [x] ✅ Persist `BaselineStats` snapshots to a `baselines` SQLite table on each recalculation so they survive daemon restarts
-- [x] ✅ `GET /v1/baseline/{device_id}/{metric}` — returns current `BaselineStats` including `sufficient` flag; clients must check `sufficient` before using delta values
-- [x] ✅ Attach `baseline_delta` map to `ContextSnapshot` — keyed by `"{device_id}/{metric}"`, value is the z-score `(current - mean) / stddev`; only populated for metrics where `sufficient = true`
-- [x] ✅ Guard: when `sufficient = false`, exclude the metric from z-score calculations and set `intent_confidence` floor to `0.4` in the `CompressionEngine`
-- [x] ✅ `GET /v1/baseline/{device_id}/{metric}/history?days=30` — time-series of daily mean values per UTC day; used by Intero’s longitudinal trend view
+## 11. 🔴 Critical: Intero App (Phase 11)
 
------
+The first-party physiological decision-support desktop application. Requires phases 9 and 10.
 
-### 10.4 `intent_code` Structured Field (`veyn-schemas`, `veyn-core`)
+### 11.1 Intero Desktop Shell
 
-`ContextSnapshot.intent` is currently a free-form `String` produced by
-`rules.toml`. Intero’s AI analysis layer needs a typed, structured field it
-can pattern-match against reliably — not a string to parse.
+- [ ] Choose and configure desktop framework — Tauri (Rust backend + WebView frontend) preferred for ELv2 alignment and native OS integration; no Electron
+- [ ] Scaffold Tauri app: `intero/` directory at workspace root; add to Cargo workspace members
+- [ ] Auto-launch VEYN daemon on app start if not already running; detect via `GET /v1/health`; show "Starting…" state in UI while daemon initialises
+- [ ] System tray integration — icon reflects current `intent_code` (color-coded); click to open main window; right-click for quick actions (start session, view context)
+- [ ] Secure token handoff — app reads `~/.local/share/veyn/token` on startup; never transmits token outside localhost
 
-- [x] ✅ Define `IntentCode` enum in `veyn-schemas`:
-  
-  ```rust
-  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-  #[serde(rename_all = "snake_case")]
-  pub enum IntentCode {
-      Neutral,
-      CognitiveLoad,
-      StressResponse,
-      Approach,       // positive arousal + HRV stability
-      Avoidance,      // elevated HR + suppressed HRV
-      Fatigue,
-      Recovery,
-      Other(String),  // forward-compatible catch-all
-  }
-  ```
-- [x] ✅ Add `intent_code: IntentCode` and `intent_confidence: f32` (0.0–1.0) fields to `ContextSnapshot` — keep the existing `intent: String` field for backward compat; `intent_code` is additive
-- [x] ✅ Implement structured intent classification in `CompressionEngine::synthesize()` — derive `intent_code` from the combination of active metric deltas against personal baseline (requires `BaselineEngine` output; build 10.3 first):
-  - `StressResponse`: HR z-score > 1.5 AND HRV z-score < -1.0
-  - `Approach`: HR z-score 0.5–1.5 AND HRV z-score > 0.0
-  - `Avoidance`: HR z-score > 0.5 AND HRV z-score < -0.5 AND skin_temp z-score > 0.5
-  - `CognitiveLoad`: EEG beta z-score > 1.0 AND alpha z-score < -0.5
-  - `Fatigue`: HR z-score < -0.5 AND EEG theta z-score > 1.0
-  - `Recovery`: HRV z-score > 1.0 AND HR z-score < 0.0
-  - `Neutral`: no conditions met above threshold
-  - `intent_confidence`: derived from signal quality (number of active devices) and baseline sufficiency; cap at 0.4 if any contributing metric has `sufficient = false`
-- [x] ✅ Update `rules.toml` semantic rules to set `intent_code` in addition to the existing `intent` string — rules file gains an optional `intent_code` field per rule; falls back to `IntentCode::Other(intent_string)` if not set
-- [x] ✅ Write deterministic unit tests for each `IntentCode` variant — inject synthetic `BaselineStats` and metric delta inputs; assert expected `intent_code` and `intent_confidence` range without live hardware
-- [x] ✅ Update `veyn-mcp` tool descriptions to document `intent_code` field in `veyn_get_context` response schema
-- [x] ✅ 🟢 Optional secondary classification pass — if `intent_confidence < 0.6`, invoke a local SLM (`llama.cpp` via FFI or subprocess) with the current metric snapshot as a structured prompt; use the SLM output to override `intent_code` and raise `intent_confidence`; gate behind `compression.use_slm = true` config flag
+### 11.2 Live Biometric Dashboard
 
------
+- [ ] Real-time `ContextSnapshot` display — subscribe to `GET /v1/context/subscribe` (SSE); render `intent_code`, `intent_confidence`, and per-metric `baseline_delta` z-scores
+- [ ] Signal strip chart — scrolling time-series per active device/metric; render from SSE stream without storing data client-side beyond the visible window
+- [ ] Baseline sufficiency indicator — surface `sufficient = false` warning per metric when < 7 days of baseline data exist
+- [ ] Device panel — list active devices from `active_devices`; show adapter type, last-seen timestamp, battery level where available
 
-## 11. 🔴 Biometric Memory Layer
+### 11.3 Decision Session UX
 
-Cross-session physiological memory that lets AI sessions start pre-loaded with biometric history.
+- [ ] "Start session" flow — prompt for decision label and optional annotation; `POST /v1/session/start`; lock UI into session mode
+- [ ] In-session view — live multi-channel signal strips synchronized to session start time; display running `intent_code` and `intent_confidence`; prominent elapsed timer
+- [ ] "Stop session" flow — `POST /v1/session/stop`; transition to session review immediately
+- [ ] Session review view — full-resolution replay via `GET /v1/session/{id}/replay`; timeline with intent overlaid; exportable via `GET /v1/session/{id}/export?format=csv`
+- [ ] Session library — paginated list from `GET /v1/sessions`; filter by date range and intent; open any session in review view
 
-- [x] ✅ `MemoryKind` enum (`Ambient` | `Semantic`) in `veyn-schemas`
-- [x] ✅ `MemoryRecord` struct: `id`, `timestamp_ms`, `session_id`, `kind`, `topic`, `summary`, `intent_at_time`, `confidence_at_time`, `hrv_at_time`, `hr_at_time`, `context_snapshot`
-- [x] ✅ `MemoryQuery` struct: `topic`, `since_ms`, `until_ms`, `kind`, `limit`
-- [x] ✅ SQLite `veyn_memory` table with indexes on `timestamp_ms`, `topic`, `kind`
-- [x] ✅ `memory.rs` in `veyn-core`: `MemoryStore`, `write`, `query`, `summarize_window`, `summarize_snapshots`
-- [x] ✅ Ambient writer background task — fires every 15 min, reads context ring buffer, writes one `Ambient` record; skips idle windows; prunes oldest ambient when `max_records` exceeded
-- [x] ✅ `POST /v1/memory` — writes a Semantic record, auto-attaches current physiological state
-- [x] ✅ `GET /v1/memory?topic=&since=&until=&kind=&limit=` — filtered retrieval
-- [x] ✅ `[memory]` config section: `enabled`, `ambient_interval_secs` (900 s), `max_records` (10 000)
-- [x] ✅ MCP tool `veyn_write_memory` (topic, summary) — semantic memory write via daemon
-- [x] ✅ MCP tool `veyn_recall_memory` (topic?, since?, kind?) — human-readable `since` ("7d", "24h", "30d") parsed to ms
-- [x] ✅ MCP session bootstrap: auto-recalls last 24 h of memory on every `initialize`, embeds in `serverInfo.context`
-- [x] ✅ Unit + integration tests: round-trips, kind filtering, ambient pruning, async writer firing
-- [x] ✅ 🟢 Optional: expose `GET /v1/memory/{id}` single-record endpoint
-- [x] ✅ 🟢 Optional: `DELETE /v1/memory/{id}` for agent-driven forgetting of a specific record
+### 11.4 Somatic Feedback Layer
+
+- [ ] Approach/Avoidance indicator — prominent visual element showing real-time `Approach` vs `Avoidance` signal relative to the decision being considered; updates live during session
+- [ ] Confidence-gated display — suppress intent classification UI when `intent_confidence < 0.4`; show "calibrating…" state instead of potentially misleading signal
+- [ ] Historical pattern panel — for the current decision topic, surface similar past sessions from memory via `GET /v1/memory?topic=`; show what the body did then
+
+### 11.5 Ambient Context Layer
+
+- [ ] Background mode — when no session is active, Intero remains running in tray; ambient writer continues; no active UI required
+- [ ] Daily digest — optional notification each morning summarising prior day's dominant intent distribution and HRV trend vs baseline; generated from memory records, no live signal required
+- [ ] Focus/recovery nudges — when `Fatigue` persists > N minutes (configurable), surface a gentle notification; when `Recovery` is detected post-fatigue, acknowledge it; all gated behind user preference toggle
+
+---
+
+## 12. 🔴 Critical: Body-Aware Computing Layer (Platform Vision)
+
+This phase fuses all six capability pillars into a unified ambient computing platform where every piece of software on the machine can optionally read physiological context.
+
+### 12.1 Universal Context API — Per-App Subscriptions
+
+- [ ] Introduce `client_id` concept — each connecting application registers with a name and capability tier; stored in memory for the session; surfaced in audit log
+- [ ] Per-app filtered subscriptions — extend the filter DSL to support `client_id` namespacing so the same daemon serves a DAW plugin, a writing assistant, and a focus timer simultaneously without crosstalk
+- [ ] `GET /v1/clients` — list currently connected subscribers with their filter configuration and tier; useful for debugging multi-app setups
+
+### 12.2 Adaptive AI Agent Integration
+
+- [ ] Publish reference agent integration spec (`docs/integrations/body-aware-agent.md`) — documents the canonical pattern: subscribe to SSE, branch on `intent_code`, adjust behavior, write `MemoryRecord` on significant events
+- [ ] Claude MCP profile extension — extend `veyn-mcp` with `veyn_suggest_action` tool that accepts the agent's proposed next action and returns whether current physiological state is congruent (e.g. don't surface a complex review when `Fatigue` is active)
+- [ ] Ollama agent loop example — runnable Python script demonstrating a Gemma 4 agent that adapts its response verbosity based on live `CognitiveLoad` signal; ship in `sdk/examples/`
+- [ ] Agent state handoff — when `intent_confidence` drops below threshold mid-session, agents should receive a `context_degraded` SSE event and fall back to neutral behavior; implement event type and document it
+
+### 12.3 Smart Environment Automation
+
+- [ ] MQTT output rules engine — extend `rules.toml` with an `[mqtt_output]` section; rules map `intent_code` transitions to MQTT topic/payload pairs; daemon publishes automatically on transition
+  - Example: `StressResponse` → publish `veyn/home/scene` = `"calm"`
+  - Example: `Recovery` → publish `veyn/home/scene` = `"energise"`
+- [ ] Home Assistant integration guide (`docs/integrations/home-assistant.md`) — documents MQTT broker config, recommended automation YAML, and scene mapping conventions
+- [ ] Environment feedback loop test harness — mock MQTT broker in `docker-compose.yml`; log all published messages; verify rules fire correctly in CI without live hardware
+
+### 12.4 Research & Longitudinal Analysis Pipeline
+
+- [ ] Batch export endpoint — `GET /v1/export?since=&until=&format=csv|jsonl` — exports all events (or session-scoped events) for a time window; bypasses compression; for research use
+- [ ] Jupyter notebook: longitudinal HRV analysis — ships in `sdk/examples/notebooks/`; demonstrates loading batch export, computing 30-day baseline trends, and visualising intent distribution over time
+- [ ] Baseline drift alert — `BaselineEngine` publishes a `baseline_drift` SSE event when a metric's 7-day mean deviates > 1.5 σ from its 30-day mean; surfaces in Intero dashboard and is queryable via MCP
+- [ ] Session comparison API — `GET /v1/sessions/compare?ids=id1,id2` — returns aligned multi-channel timelines and summary stats delta between two sessions; useful for "this vs last time I faced a similar decision"
+
+### 12.5 WASM Plugin Ecosystem
+
+- [ ] Plugin registry format — define `registry.toml` schema: name, version, author, description, verified flag, `.wasm` URL, sha256; ship example registry at `plugins/registry.toml`
+- [ ] `veyn plugin search <keyword>` CLI subcommand — reads local and optionally a remote registry URL (configurable); lists matching plugins
+- [ ] `veyn plugin verify <path>` CLI subcommand — checks sha256 and signature without installing; for user trust inspection
+- [ ] Third-party plugin authoring guide (`docs/plugins/authoring.md`) — end-to-end walkthrough: scaffold with `sdk`, declare device descriptors, use host imports, publish to registry; include the Garmin example as the worked case
+- [ ] Plugin capability declaration — extend `plugin.toml` manifest with `[capabilities]` section declaring which host functions the plugin uses (`http_get`, `read_device`, `time_ms`, `log`); daemon rejects plugins claiming capabilities not listed at install time
+
+### 12.6 Cross-Platform Parity
+
+- [ ] Verify full adapter matrix on all three platforms (macOS, Linux, Windows) in CI — matrix job in GitHub Actions; `VEYN_MOCK=true` smoke test + adapter unit tests; flag any platform-specific regressions
+- [ ] Audio level adapter (`cpal`) — RMS/peak from default input device; useful for voice/environment sensing; emit as `VeynEvent` with `source = "audio"`
+- [ ] OSC output adapter — send OSC messages downstream to DAW/VJ software; complement to existing OSC input adapter; configurable target host:port in `veyn.toml`
+- [ ] Go SDK (`sdk/go/`) — idiomatic Go client; HTTP + SSE + WebSocket; typed structs matching `veyn-schemas`; target use case: server-side agent integrations running alongside the daemon
+
+---
+
+## 13. 🟢 Platform Hardening & Operations
+
+- [ ] 🟢 Mutual TLS (mTLS) option — for high-security deployments; `[tls]` section in `veyn.toml`; document cert generation in `INSTALL.md`
+- [ ] 🟢 Structured log output — `VEYN_LOG_FORMAT=json` env flag; emit `tracing` spans as JSON for log aggregation pipelines
+- [ ] 🟢 Plugin sandbox resource limits — cap WASM guest memory and CPU time via `wasmtime::Config`; prevent runaway plugins from starving the daemon event loop
+- [ ] 🟢 Prometheus metrics — expand `GET /metrics` coverage to include per-adapter event rates, compression engine latency, memory store write latency, and WebSocket client counts
+- [ ] 🟢 `veyn benchmark` CLI subcommand — inject N mock events/s via the mock adapter; report compression engine throughput, p99 latency, and memory usage; useful for sizing deployments
