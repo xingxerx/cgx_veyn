@@ -142,15 +142,16 @@ async fn main() -> Result<()> {
         let mut baseline = state.baseline_engine.lock().unwrap();
         // Query all distinct (device_id, metric) pairs and load their samples.
         let pairs: Vec<(String, String)> = {
-            let mut stmt = conn
-                .prepare("SELECT DISTINCT device_id, metric FROM baseline_samples")
-                .unwrap_or_else(|e| {
+            match conn.prepare("SELECT DISTINCT device_id, metric FROM baseline_samples") {
+                Ok(mut stmt) => stmt
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default(),
+                Err(e) => {
                     warn!("baseline restore query failed: {}", e);
-                    panic!()
-                });
-            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                .unwrap_or_default()
+                    Vec::new()
+                }
+            }
         };
         for (dev, met) in &pairs {
             match storage::load_baseline_samples(&conn, dev, met, baseline::WINDOW_DAYS) {
