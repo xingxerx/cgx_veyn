@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use veyn_schemas::VeynEvent;
 
+pub mod audio_level;
 pub mod ble;
 pub mod eeg;
 pub mod fs_watcher;
@@ -10,6 +11,7 @@ pub mod healthkit;
 pub mod midi;
 pub mod mock;
 pub mod mqtt;
+pub mod osc_output;
 pub mod serial_adapter;
 
 #[cfg(target_os = "linux")]

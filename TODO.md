@@ -55,8 +55,8 @@
 - [x] ✅ MIDI adapter (`midir`) — CC events, note on/off, clock
 - [x] ✅ Serial/UART adapter (`serialport`)
 - [x] ✅ Filesystem watcher adapter (`notify`)
-- [ ] 🟢 OSC output adapter — send OSC messages to DAW/VJ software as a downstream sink
-- [ ] 🟢 Audio level adapter (`cpal`) — RMS/peak metering from default input device
+- [x] ✅ 🟢 OSC output adapter — send OSC messages to DAW/VJ software as a downstream sink
+- [x] ✅ 🟢 Audio level adapter (`cpal`) — RMS/peak metering from default input device
 
 ---
 
@@ -77,7 +77,7 @@
 - [x] ✅ TypeScript/Node.js SDK — typed `VeynEvent` and `ContextSnapshot`; async `subscribe()` over WebSocket; Bearer auth
 - [x] ✅ Python SDK — async context manager; typed dataclasses; example Jupyter notebook
 - [x] ✅ SDK usage examples: LLM agent integration, WASM plugin, context history reader
-- [ ] 🟢 Go SDK — for server-side agent integrations
+- [x] ✅ 🟢 Go SDK — for server-side agent integrations
 
 ---
 
