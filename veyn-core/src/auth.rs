@@ -369,6 +369,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generate_token_format() {
+        let token = generate_token().expect("failed to generate token");
+        assert_eq!(token.len(), 64);
+        assert!(token
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+
+        // Ensure consecutive tokens are unique (highly probable)
+        let token2 = generate_token().expect("failed to generate second token");
+        assert_ne!(token, token2);
+    }
+
+    #[test]
     fn scoped_token_read_only_detection() {
         let tok = ScopedToken {
             token: "abc".to_string(),
