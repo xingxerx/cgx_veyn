@@ -13,6 +13,7 @@
 //! # Platform gate
 //! This module is only compiled on `target_os = "windows"`.
 
+#[allow(unused_imports)]
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
