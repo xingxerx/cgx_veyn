@@ -94,21 +94,28 @@ async fn dashboard() -> Html<&'static str> {
 
 // ── GET /health ────────────────────────────────────────────────────────────────
 
-async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn health(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     let uptime = state.start_time.elapsed().as_secs();
     let raw = state.raw_event_count.load(Ordering::Relaxed);
     let filtered = state.event_count.load(Ordering::Relaxed);
-    let ratio = *state.compression_ratio.lock().unwrap();
-    let connected_devices = state.devices.lock().unwrap().len();
+    let ratio = *state
+        .compression_ratio
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let connected_devices = state
+        .devices
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .len();
     let event_rate_hz = filtered.checked_div(uptime).unwrap_or(0);
     let recording_session_id = state
         .session_manager
         .lock()
-        .unwrap()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .current_id()
         .map(|a| (*a).clone());
 
-    Json(json!({
+    Ok(Json(json!({
         "status":               "ok",
         "version":              env!("CARGO_PKG_VERSION"),
         "uptime_s":             uptime,
@@ -119,7 +126,7 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
         "compression_ratio":    ratio,
         "connected_devices":    connected_devices,
         "recording_session_id": recording_session_id,
-    }))
+    })))
 }
 
 // ── GET /events/recent ────────────────────────────────────────────────────────
