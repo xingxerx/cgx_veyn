@@ -336,19 +336,31 @@ impl VeynDevice {
 // ── MemoryKind ────────────────────────────────────────────────────────────────
 
 /// Classification of a memory record's origin.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryKind {
     /// Auto-generated summary of a time window produced by the ambient writer task.
     Ambient,
     /// Explicitly written by the AI agent at the end of a meaningful session.
+    #[default]
     Semantic,
+}
+
+// ── OutcomeRating ─────────────────────────────────────────────────────────────
+
+/// Outcome rating anchored to a memory record after the fact.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeRating {
+    Positive,
+    Neutral,
+    Negative,
 }
 
 // ── MemoryRecord ──────────────────────────────────────────────────────────────
 
 /// A persistent biometric memory entry linking a session topic to physiological state.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MemoryRecord {
     pub id: String,
     pub timestamp_ms: i64,
@@ -367,6 +379,13 @@ pub struct MemoryRecord {
     /// Full ContextSnapshot JSON blob at the time of the write.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_snapshot: Option<serde_json::Value>,
+    /// Outcome rating anchored after the fact via PATCH /v1/memory/{id}/outcome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome_rating: Option<OutcomeRating>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome_notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome_at_ms: Option<i64>,
 }
 
 // ── MemoryQuery ───────────────────────────────────────────────────────────────
@@ -379,4 +398,33 @@ pub struct MemoryQuery {
     pub until_ms: Option<i64>,
     pub kind: Option<MemoryKind>,
     pub limit: Option<usize>,
+}
+
+// ── PatternRecord ─────────────────────────────────────────────────────────────
+
+/// Physiological pattern computed by veyn-insight for a memory topic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatternRecord {
+    /// Memory topic this pattern describes.
+    pub topic: String,
+    /// Number of memory records analysed.
+    pub sample_count: u32,
+    /// Mean heart rate observed while working on this topic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_hr: Option<f64>,
+    /// Mean HRV observed while working on this topic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_hrv: Option<f64>,
+    /// Most frequent intent code recorded during this topic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dominant_intent: Option<String>,
+    /// Intent code frequency map; keys are intent strings, values are 0.0–1.0 fractions.
+    pub intent_distribution: serde_json::Value,
+    /// UTC hour (0–23) with the highest record density for this topic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_hour: Option<u8>,
+    /// Timestamp of the most recent memory record for this topic.
+    pub last_seen_ms: i64,
+    /// When this pattern was computed.
+    pub computed_at_ms: i64,
 }

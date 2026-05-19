@@ -22,8 +22,8 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tracing::warn;
 use uuid::Uuid;
 use veyn_schemas::{
-    ContextSnapshot, IntentCode, MemoryKind, MemoryQuery, MemoryRecord, Session, StateDelta,
-    VeynEvent, VeynNotification,
+    ContextSnapshot, IntentCode, MemoryKind, MemoryQuery, MemoryRecord, OutcomeRating, Session,
+    StateDelta, VeynEvent, VeynNotification,
 };
 
 use super::state::AppState;
@@ -80,8 +80,11 @@ pub fn router(state: AppState) -> Router {
         // Memory layer (Phase 9)
         .route("/v1/memory", post(memory_write))
         .route("/v1/memory", get(memory_query))
+        .route("/v1/memory/:id/outcome", patch(memory_anchor_outcome))
         .route("/v1/memory/:id", get(memory_get))
-        .route("/v1/memory/:id", axum::routing::delete(memory_delete));
+        .route("/v1/memory/:id", axum::routing::delete(memory_delete))
+        // Pattern detection (veyn-insight)
+        .route("/v1/patterns", get(patterns_list));
 
     legacy.merge(v1).with_state(state)
 }
@@ -1160,6 +1163,9 @@ async fn memory_write(
         hrv_at_time: hrv,
         hr_at_time: hr,
         context_snapshot: ctx_blob,
+        outcome_rating: None,
+        outcome_notes: None,
+        outcome_at_ms: None,
     };
 
     match &state.db {
@@ -1293,6 +1299,95 @@ async fn memory_query(
                     (
                         StatusCode::OK,
                         Json(json!({ "records": records, "count": count })),
+                    )
+                        .into_response()
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── PATCH /v1/memory/:id/outcome ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct OutcomeRequest {
+    outcome_rating: String,
+    notes: Option<String>,
+}
+
+async fn memory_anchor_outcome(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<OutcomeRequest>,
+) -> impl IntoResponse {
+    let rating = match req.outcome_rating.as_str() {
+        "positive" => OutcomeRating::Positive,
+        "negative" => OutcomeRating::Negative,
+        "neutral" => OutcomeRating::Neutral,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "invalid outcome_rating; use positive, neutral, or negative"
+                })),
+            )
+                .into_response()
+        }
+    };
+
+    match &state.db {
+        Some(db) => {
+            let store =
+                crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
+            match store.anchor_outcome(&id, rating, req.notes) {
+                Ok(()) => {
+                    (StatusCode::OK, Json(json!({ "id": id, "anchored": true }))).into_response()
+                }
+                Err(e) => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/patterns ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct PatternsParams {
+    min_samples: Option<u32>,
+}
+
+async fn patterns_list(
+    State(state): State<AppState>,
+    Query(params): Query<PatternsParams>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            match veyn_insight::analyze_patterns(&conn, params.min_samples) {
+                Ok(patterns) => {
+                    let count = patterns.len();
+                    (
+                        StatusCode::OK,
+                        Json(json!({ "patterns": patterns, "count": count })),
                     )
                         .into_response()
                 }

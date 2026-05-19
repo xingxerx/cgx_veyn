@@ -271,3 +271,101 @@ class BaselineDailyPoint:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "BaselineDailyPoint":
         return cls(ts=int(d["ts"]), mean=float(d["mean"]))
+
+
+# ── Memory layer ──────────────────────────────────────────────────────────────
+
+# MemoryKind constants
+MEMORY_KIND_AMBIENT  = "ambient"
+MEMORY_KIND_SEMANTIC = "semantic"
+MemoryKind = str  # type alias
+
+# OutcomeRating constants
+OUTCOME_POSITIVE = "positive"
+OUTCOME_NEUTRAL  = "neutral"
+OUTCOME_NEGATIVE = "negative"
+OutcomeRating = str  # type alias
+
+
+@dataclass
+class MemoryRecord:
+    """A persistent biometric memory entry linking a topic to physiological state."""
+
+    id: str
+    timestamp_ms: int
+    session_id: str
+    kind: MemoryKind
+    topic: str
+    summary: str
+    intent_at_time: str | None = None
+    confidence_at_time: float | None = None
+    hrv_at_time: float | None = None
+    hr_at_time: float | None = None
+    context_snapshot: Any | None = None
+    outcome_rating: OutcomeRating | None = None
+    outcome_notes: str | None = None
+    outcome_at_ms: int | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "MemoryRecord":
+        return cls(
+            id=d["id"],
+            timestamp_ms=int(d["timestamp_ms"]),
+            session_id=d["session_id"],
+            kind=d["kind"],
+            topic=d["topic"],
+            summary=d["summary"],
+            intent_at_time=d.get("intent_at_time"),
+            confidence_at_time=float(d["confidence_at_time"])
+            if d.get("confidence_at_time") is not None
+            else None,
+            hrv_at_time=float(d["hrv_at_time"]) if d.get("hrv_at_time") is not None else None,
+            hr_at_time=float(d["hr_at_time"]) if d.get("hr_at_time") is not None else None,
+            context_snapshot=d.get("context_snapshot"),
+            outcome_rating=d.get("outcome_rating"),
+            outcome_notes=d.get("outcome_notes"),
+            outcome_at_ms=int(d["outcome_at_ms"]) if d.get("outcome_at_ms") is not None else None,
+        )
+
+
+@dataclass
+class MemoryQuery:
+    """Filter parameters for GET /v1/memory."""
+
+    topic: str | None = None
+    since: int | None = None
+    until: int | None = None
+    kind: MemoryKind | None = None
+    limit: int | None = None
+
+
+# ── Pattern detection (veyn-insight) ─────────────────────────────────────────
+
+
+@dataclass
+class PatternRecord:
+    """Physiological pattern computed by veyn-insight for a memory topic."""
+
+    topic: str
+    sample_count: int
+    intent_distribution: dict[str, float]
+    last_seen_ms: int
+    computed_at_ms: int
+    avg_hr: float | None = None
+    avg_hrv: float | None = None
+    dominant_intent: str | None = None
+    peak_hour: int | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "PatternRecord":
+        return cls(
+            topic=d["topic"],
+            sample_count=int(d["sample_count"]),
+            intent_distribution=dict(d.get("intent_distribution") or {}),
+            last_seen_ms=int(d["last_seen_ms"]),
+            computed_at_ms=int(d["computed_at_ms"]),
+            avg_hr=float(d["avg_hr"]) if d.get("avg_hr") is not None else None,
+            avg_hrv=float(d["avg_hrv"]) if d.get("avg_hrv") is not None else None,
+            dominant_intent=d.get("dominant_intent"),
+            peak_hour=int(d["peak_hour"]) if d.get("peak_hour") is not None else None,
+        )

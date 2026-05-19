@@ -13,6 +13,10 @@ import websockets.exceptions
 from .types import (
     BaselineStats,
     ContextSnapshot,
+    MemoryQuery,
+    MemoryRecord,
+    OutcomeRating,
+    PatternRecord,
     Session,
     TemporalSignal,
     VeynDevice,
@@ -205,6 +209,68 @@ class VeynClient:
             resp.raise_for_status()
             data = await resp.json()
         return BaselineStats.from_dict(data)
+
+    # ── Memory layer ──────────────────────────────────────────────────────────
+
+    async def write_memory(self, topic: str, summary: str) -> MemoryRecord:
+        """Write a semantic memory record; the daemon attaches current biometric state."""
+        async with self._get_session().post(
+            self._url("/v1/memory"), json={"topic": topic, "summary": summary}
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+        return MemoryRecord.from_dict(data)
+
+    async def get_memory(self, query: MemoryQuery | None = None) -> list[MemoryRecord]:
+        """Query memory records with optional filters."""
+        params: dict[str, str | int] = {}
+        if query:
+            if query.topic is not None:
+                params["topic"] = query.topic
+            if query.since is not None:
+                params["since"] = query.since
+            if query.until is not None:
+                params["until"] = query.until
+            if query.kind is not None:
+                params["kind"] = query.kind
+            if query.limit is not None:
+                params["limit"] = query.limit
+        async with self._get_session().get(
+            self._url("/v1/memory"), params=params
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+        return [MemoryRecord.from_dict(r) for r in data.get("records", [])]
+
+    async def anchor_outcome(
+        self,
+        record_id: str,
+        outcome_rating: OutcomeRating,
+        notes: str | None = None,
+    ) -> dict[str, object]:
+        """Attach an outcome rating to a past memory record."""
+        body: dict[str, str] = {"outcome_rating": outcome_rating}
+        if notes is not None:
+            body["notes"] = notes
+        async with self._get_session().patch(
+            self._url(f"/v1/memory/{record_id}/outcome"), json=body
+        ) as resp:
+            resp.raise_for_status()
+            return await resp.json()  # type: ignore[no-any-return]
+
+    # ── Pattern detection ──────────────────────────────────────────────────────
+
+    async def get_patterns(self, min_samples: int | None = None) -> list[PatternRecord]:
+        """Return topic-level physiological patterns from veyn-insight."""
+        params: dict[str, int] = {}
+        if min_samples is not None:
+            params["min_samples"] = min_samples
+        async with self._get_session().get(
+            self._url("/v1/patterns"), params=params
+        ) as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+        return [PatternRecord.from_dict(p) for p in data.get("patterns", [])]
 
     # ── Temporal patterns ──────────────────────────────────────────────────────
 

@@ -1,0 +1,12 @@
+[package]
+name        = "veyn-insight"
+version     = "0.1.0"
+edition     = "2021"
+description = "Pattern detection and physiological correlation analysis for VEYN memory"
+
+[dependencies]
+veyn-schemas = { path = "../veyn-schemas" }
+rusqlite     = { version = "0.31", features = ["bundled"] }
+anyhow       = { workspace = true }
+serde_json   = { workspace = true }
+chrono       = { workspace = true }
