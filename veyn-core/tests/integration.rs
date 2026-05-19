@@ -170,6 +170,9 @@ fn memory_record_roundtrips_through_json() {
         hrv_at_time: Some(42.5),
         hr_at_time: Some(70.0),
         context_snapshot: None,
+        outcome_rating: None,
+        outcome_notes: None,
+        outcome_at_ms: None,
     };
 
     let json = serde_json::to_string(&record).unwrap();
@@ -207,6 +210,9 @@ fn memory_record_optional_fields_skip_null_in_json() {
         hrv_at_time: None,
         hr_at_time: None,
         context_snapshot: None,
+        outcome_rating: None,
+        outcome_notes: None,
+        outcome_at_ms: None,
     };
     let json = serde_json::to_string(&record).unwrap();
     assert!(

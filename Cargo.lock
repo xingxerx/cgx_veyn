@@ -3450,7 +3450,19 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "veyn-adapters",
+ "veyn-insight",
  "veyn-plugins",
+ "veyn-schemas",
+]
+
+[[package]]
+name = "veyn-insight"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rusqlite",
+ "serde_json",
  "veyn-schemas",
 ]
 

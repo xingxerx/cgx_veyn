@@ -66,7 +66,10 @@ fn migrate(conn: &Connection) -> Result<()> {
             confidence_at_time REAL,
             hrv_at_time        REAL,
             hr_at_time         REAL,
-            context_snapshot   TEXT
+            context_snapshot   TEXT,
+            outcome_rating     TEXT,
+            outcome_notes      TEXT,
+            outcome_at_ms      INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_memory_ts    ON veyn_memory(timestamp_ms);
@@ -74,6 +77,16 @@ fn migrate(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_memory_kind  ON veyn_memory(kind);
         ",
     )?;
+
+    // Outcome columns — idempotent: ALTER TABLE is ignored if the column already exists.
+    for sql in &[
+        "ALTER TABLE veyn_memory ADD COLUMN outcome_rating TEXT",
+        "ALTER TABLE veyn_memory ADD COLUMN outcome_notes TEXT",
+        "ALTER TABLE veyn_memory ADD COLUMN outcome_at_ms INTEGER",
+    ] {
+        let _ = conn.execute(sql, []);
+    }
+
     Ok(())
 }
 

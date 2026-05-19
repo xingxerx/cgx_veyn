@@ -5,6 +5,10 @@ import * as net from "net";
 
 import type {
   ContextSnapshot,
+  MemoryQuery,
+  MemoryRecord,
+  OutcomeRating,
+  PatternRecord,
   VeynEvent,
   VeynDevice,
   Session,
@@ -279,6 +283,60 @@ export class VeynClient {
       ),
       { headers: this.headers() }
     );
+  }
+
+  // ── Memory layer ─────────────────────────────────────────────────────────────
+
+  /** Write a semantic memory record; the daemon attaches the current biometric state. */
+  async writeMemory(topic: string, summary: string): Promise<MemoryRecord> {
+    return fetchJson<MemoryRecord>(this.url("/v1/memory"), {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ topic, summary }),
+    });
+  }
+
+  /** Query memory records with optional filters. */
+  async getMemory(query?: MemoryQuery): Promise<MemoryRecord[]> {
+    const params: Record<string, string | number | undefined> = {
+      topic: query?.topic,
+      since: query?.since,
+      until: query?.until,
+      kind: query?.kind,
+      limit: query?.limit,
+    };
+    const qs = buildQuery(params);
+    const result = await fetchJson<{ records: MemoryRecord[]; count: number }>(
+      this.url(`/v1/memory${qs}`),
+      { headers: this.headers() }
+    );
+    return result.records;
+  }
+
+  /** Anchor an outcome rating to a memory record after the session. */
+  async anchorOutcome(
+    id: string,
+    outcomeRating: OutcomeRating,
+    notes?: string
+  ): Promise<{ id: string; anchored: boolean }> {
+    const body: Record<string, string> = { outcome_rating: outcomeRating };
+    if (notes !== undefined) body["notes"] = notes;
+    return fetchJson<{ id: string; anchored: boolean }>(
+      this.url(`/v1/memory/${encodeURIComponent(id)}/outcome`),
+      { method: "PATCH", headers: this.headers(), body: JSON.stringify(body) }
+    );
+  }
+
+  // ── Pattern detection ─────────────────────────────────────────────────────────
+
+  /** Return topic-level physiological patterns computed by veyn-insight. */
+  async getPatterns(minSamples?: number): Promise<PatternRecord[]> {
+    const qs = buildQuery({ min_samples: minSamples });
+    const result = await fetchJson<{ patterns: PatternRecord[]; count: number }>(
+      this.url(`/v1/patterns${qs}`),
+      { headers: this.headers() }
+    );
+    return result.patterns;
   }
 
   // ── Temporal patterns ─────────────────────────────────────────────────────────

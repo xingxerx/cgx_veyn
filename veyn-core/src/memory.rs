@@ -9,7 +9,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection};
 use tracing::{info, warn};
 use uuid::Uuid;
-use veyn_schemas::{ContextSnapshot, MemoryKind, MemoryQuery, MemoryRecord};
+use veyn_schemas::{ContextSnapshot, MemoryKind, MemoryQuery, MemoryRecord, OutcomeRating};
 
 use crate::config::Config;
 
@@ -24,6 +24,16 @@ pub struct MemoryStore {
 impl MemoryStore {
     pub fn new(db: Arc<Mutex<Connection>>, max_records: usize) -> Self {
         Self { db, max_records }
+    }
+
+    pub fn anchor_outcome(
+        &self,
+        id: &str,
+        rating: OutcomeRating,
+        notes: Option<String>,
+    ) -> Result<()> {
+        let conn = self.db.lock().unwrap();
+        write_anchor_outcome(&conn, id, rating, notes)
     }
 
     pub fn write(&self, record: MemoryRecord) -> Result<()> {
@@ -93,11 +103,13 @@ pub fn write_memory(conn: &Connection, record: &MemoryRecord) -> Result<()> {
         .context_snapshot
         .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_default());
+    let outcome_str = record.outcome_rating.as_ref().map(outcome_to_str);
     conn.execute(
         "INSERT OR REPLACE INTO veyn_memory
          (id, timestamp_ms, session_id, kind, topic, summary,
-          intent_at_time, confidence_at_time, hrv_at_time, hr_at_time, context_snapshot)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+          intent_at_time, confidence_at_time, hrv_at_time, hr_at_time, context_snapshot,
+          outcome_rating, outcome_notes, outcome_at_ms)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         params![
             record.id,
             record.timestamp_ms,
@@ -110,6 +122,9 @@ pub fn write_memory(conn: &Connection, record: &MemoryRecord) -> Result<()> {
             record.hrv_at_time,
             record.hr_at_time,
             ctx_json,
+            outcome_str,
+            record.outcome_notes,
+            record.outcome_at_ms,
         ],
     )?;
     Ok(())
@@ -118,7 +133,8 @@ pub fn write_memory(conn: &Connection, record: &MemoryRecord) -> Result<()> {
 pub fn get_memory_by_id(conn: &Connection, id: &str) -> Result<Option<MemoryRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, timestamp_ms, session_id, kind, topic, summary,
-                intent_at_time, confidence_at_time, hrv_at_time, hr_at_time, context_snapshot
+                intent_at_time, confidence_at_time, hrv_at_time, hr_at_time, context_snapshot,
+                outcome_rating, outcome_notes, outcome_at_ms
          FROM veyn_memory
          WHERE id = ?1",
     )?;
@@ -126,6 +142,7 @@ pub fn get_memory_by_id(conn: &Connection, id: &str) -> Result<Option<MemoryReco
     let mut rows = stmt.query_map(params![id], |row| {
         let kind_raw: String = row.get(3)?;
         let ctx_raw: Option<String> = row.get(10)?;
+        let outcome_raw: Option<String> = row.get(11)?;
         Ok(MemoryRecord {
             id: row.get(0)?,
             timestamp_ms: row.get(1)?,
@@ -138,6 +155,9 @@ pub fn get_memory_by_id(conn: &Connection, id: &str) -> Result<Option<MemoryReco
             hrv_at_time: row.get(8)?,
             hr_at_time: row.get(9)?,
             context_snapshot: ctx_raw.and_then(|s| serde_json::from_str(&s).ok()),
+            outcome_rating: outcome_raw.as_deref().map(str_to_outcome),
+            outcome_notes: row.get(12)?,
+            outcome_at_ms: row.get(13)?,
         })
     })?;
 
@@ -153,6 +173,24 @@ pub fn delete_memory_by_id(conn: &Connection, id: &str) -> Result<bool> {
     Ok(rows_affected > 0)
 }
 
+fn write_anchor_outcome(
+    conn: &Connection,
+    id: &str,
+    rating: OutcomeRating,
+    notes: Option<String>,
+) -> Result<()> {
+    let rating_str = outcome_to_str(&rating);
+    let now = Utc::now().timestamp_millis();
+    let rows = conn.execute(
+        "UPDATE veyn_memory SET outcome_rating=?1, outcome_notes=?2, outcome_at_ms=?3 WHERE id=?4",
+        params![rating_str, notes, now, id],
+    )?;
+    if rows == 0 {
+        anyhow::bail!("memory record not found: {}", id);
+    }
+    Ok(())
+}
+
 pub fn query_memory(conn: &Connection, q: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
     let since_ms = q.since_ms.unwrap_or(i64::MIN);
     let until_ms = q.until_ms.unwrap_or(i64::MAX);
@@ -161,7 +199,8 @@ pub fn query_memory(conn: &Connection, q: &MemoryQuery) -> Result<Vec<MemoryReco
 
     let mut stmt = conn.prepare(
         "SELECT id, timestamp_ms, session_id, kind, topic, summary,
-                intent_at_time, confidence_at_time, hrv_at_time, hr_at_time, context_snapshot
+                intent_at_time, confidence_at_time, hrv_at_time, hr_at_time, context_snapshot,
+                outcome_rating, outcome_notes, outcome_at_ms
          FROM veyn_memory
          WHERE (?1 IS NULL OR topic = ?1)
            AND (?2 IS NULL OR kind  = ?2)
@@ -176,6 +215,7 @@ pub fn query_memory(conn: &Connection, q: &MemoryQuery) -> Result<Vec<MemoryReco
         |row| {
             let kind_raw: String = row.get(3)?;
             let ctx_raw: Option<String> = row.get(10)?;
+            let outcome_raw: Option<String> = row.get(11)?;
             Ok(MemoryRecord {
                 id: row.get(0)?,
                 timestamp_ms: row.get(1)?,
@@ -188,6 +228,9 @@ pub fn query_memory(conn: &Connection, q: &MemoryQuery) -> Result<Vec<MemoryReco
                 hrv_at_time: row.get(8)?,
                 hr_at_time: row.get(9)?,
                 context_snapshot: ctx_raw.and_then(|s| serde_json::from_str(&s).ok()),
+                outcome_rating: outcome_raw.as_deref().map(str_to_outcome),
+                outcome_notes: row.get(12)?,
+                outcome_at_ms: row.get(13)?,
             })
         },
     )?;
@@ -231,6 +274,22 @@ fn str_to_kind(s: &str) -> MemoryKind {
         MemoryKind::Ambient
     } else {
         MemoryKind::Semantic
+    }
+}
+
+fn outcome_to_str(r: &OutcomeRating) -> &'static str {
+    match r {
+        OutcomeRating::Positive => "positive",
+        OutcomeRating::Neutral => "neutral",
+        OutcomeRating::Negative => "negative",
+    }
+}
+
+fn str_to_outcome(s: &str) -> OutcomeRating {
+    match s {
+        "positive" => OutcomeRating::Positive,
+        "negative" => OutcomeRating::Negative,
+        _ => OutcomeRating::Neutral,
     }
 }
 
@@ -387,6 +446,9 @@ pub async fn ambient_writer(
             hrv_at_time: hrv,
             hr_at_time: hr,
             context_snapshot: None,
+            outcome_rating: None,
+            outcome_notes: None,
+            outcome_at_ms: None,
         };
 
         match store.write(record) {
@@ -485,6 +547,9 @@ mod tests {
             hrv_at_time: Some(42.3),
             hr_at_time: Some(71.0),
             context_snapshot: None,
+            outcome_rating: None,
+            outcome_notes: None,
+            outcome_at_ms: None,
         };
 
         write_memory(&conn, &record).unwrap();
@@ -526,6 +591,9 @@ mod tests {
                     hrv_at_time: None,
                     hr_at_time: None,
                     context_snapshot: None,
+                    outcome_rating: None,
+                    outcome_notes: None,
+                    outcome_at_ms: None,
                 },
             )
             .unwrap();
@@ -633,6 +701,9 @@ mod tests {
                     hrv_at_time: None,
                     hr_at_time: None,
                     context_snapshot: None,
+                    outcome_rating: None,
+                    outcome_notes: None,
+                    outcome_at_ms: None,
                 },
             )
             .unwrap();
@@ -651,6 +722,9 @@ mod tests {
                 hrv_at_time: None,
                 hr_at_time: None,
                 context_snapshot: None,
+                outcome_rating: None,
+                outcome_notes: None,
+                outcome_at_ms: None,
             },
         )
         .unwrap();

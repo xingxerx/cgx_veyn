@@ -233,3 +233,53 @@ export interface WsContextFilter {
   /** When true, suppress snapshots with intent_code == "neutral". */
   excludeNeutral?: boolean;
 }
+
+// ── Memory layer ──────────────────────────────────────────────────────────────
+
+export type MemoryKind = "ambient" | "semantic";
+
+export type OutcomeRating = "positive" | "neutral" | "negative";
+
+/** A persistent biometric memory entry linking a topic to physiological state. */
+export interface MemoryRecord {
+  id: string;
+  timestamp_ms: number;
+  session_id: string;
+  kind: MemoryKind;
+  topic: string;
+  summary: string;
+  intent_at_time?: string;
+  confidence_at_time?: number;
+  hrv_at_time?: number;
+  hr_at_time?: number;
+  context_snapshot?: unknown;
+  outcome_rating?: OutcomeRating;
+  outcome_notes?: string;
+  outcome_at_ms?: number;
+}
+
+/** Query filter for GET /v1/memory. */
+export interface MemoryQuery {
+  topic?: string;
+  since?: number;
+  until?: number;
+  kind?: MemoryKind;
+  limit?: number;
+}
+
+// ── Pattern detection (veyn-insight) ─────────────────────────────────────────
+
+/** Physiological pattern computed by veyn-insight for a memory topic. */
+export interface PatternRecord {
+  topic: string;
+  sample_count: number;
+  avg_hr?: number;
+  avg_hrv?: number;
+  dominant_intent?: string;
+  /** Intent code → frequency (0.0–1.0) */
+  intent_distribution: Record<string, number>;
+  /** UTC hour (0–23) with highest record density for this topic. */
+  peak_hour?: number;
+  last_seen_ms: number;
+  computed_at_ms: number;
+}
