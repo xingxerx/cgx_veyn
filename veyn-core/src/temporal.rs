@@ -184,38 +184,50 @@ mod tests {
     }
 
     #[test]
-    fn detects_rising_trend() {
+    fn detects_rising_trend() -> anyhow::Result<()> {
         let mut engine = TemporalEngine::new();
         push_linear(&mut engine, "heart_rate", 0, 20, 0.5); // +0.5 bpm/min
         let patterns = engine.get_patterns();
-        let sig = patterns.iter().find(|s| s.metric == "heart_rate").unwrap();
+        let sig = patterns
+            .iter()
+            .find(|s| s.metric == "heart_rate")
+            .ok_or_else(|| anyhow::anyhow!("heart_rate signal not found"))?;
         assert_eq!(sig.trend, TemporalTrend::Rising);
         assert!(sig.slope_per_min > 0.0);
+        Ok(())
     }
 
     #[test]
-    fn detects_falling_trend() {
+    fn detects_falling_trend() -> anyhow::Result<()> {
         let mut engine = TemporalEngine::new();
         push_linear(&mut engine, "hrv", 0, 20, -1.0); // -1 ms/min
         let patterns = engine.get_patterns();
-        let sig = patterns.iter().find(|s| s.metric == "hrv").unwrap();
+        let sig = patterns
+            .iter()
+            .find(|s| s.metric == "hrv")
+            .ok_or_else(|| anyhow::anyhow!("hrv signal not found"))?;
         assert_eq!(sig.trend, TemporalTrend::Falling);
         assert!(sig.slope_per_min < 0.0);
+        Ok(())
     }
 
     #[test]
-    fn detects_stable() {
+    fn detects_stable() -> anyhow::Result<()> {
         let mut engine = TemporalEngine::new();
         for i in 0..20 {
             engine.push("heart_rate", i * 60_000, 72.0); // perfectly flat
         }
         let patterns = engine.get_patterns();
-        let sig = patterns.iter().find(|s| s.metric == "heart_rate").unwrap();
+        let sig = patterns
+            .iter()
+            .find(|s| s.metric == "heart_rate")
+            .ok_or_else(|| anyhow::anyhow!("heart_rate signal not found"))?;
         assert_eq!(sig.trend, TemporalTrend::Stable);
+        Ok(())
     }
 
     #[test]
-    fn detects_spike() {
+    fn detects_spike() -> anyhow::Result<()> {
         let mut engine = TemporalEngine::new();
         let base_ts: i64 = 0;
         // 15 samples at ~70, then a sharp jump to ~110 in the last 4 samples
@@ -226,20 +238,28 @@ mod tests {
             engine.push("heart_rate", base_ts + (15 + i) * 60_000, 115.0);
         }
         let patterns = engine.get_patterns();
-        let sig = patterns.iter().find(|s| s.metric == "heart_rate").unwrap();
+        let sig = patterns
+            .iter()
+            .find(|s| s.metric == "heart_rate")
+            .ok_or_else(|| anyhow::anyhow!("heart_rate signal not found"))?;
         assert_eq!(sig.trend, TemporalTrend::Spiking);
+        Ok(())
     }
 
     #[test]
-    fn window_evicts_old_samples() {
+    fn window_evicts_old_samples() -> anyhow::Result<()> {
         let mut engine = TemporalEngine::new();
         // Push 30 samples spaced 2 minutes apart (60 minutes total — exceeds 20-min window)
         for i in 0..30_i64 {
             engine.push("heart_rate", i * 2 * 60_000, 70.0 + i as f64);
         }
         let patterns = engine.get_patterns();
-        let sig = patterns.iter().find(|s| s.metric == "heart_rate").unwrap();
+        let sig = patterns
+            .iter()
+            .find(|s| s.metric == "heart_rate")
+            .ok_or_else(|| anyhow::anyhow!("heart_rate signal not found"))?;
         // Only samples within the 20-min window should survive
         assert!(sig.samples <= 11); // 20 min / 2 min intervals + 1
+        Ok(())
     }
 }
