@@ -152,6 +152,7 @@ decisions they are weighing.
 - [x] Structured intent classification in `CompressionEngine` — z-score threshold rules per variant
 - [x] `rules.toml` extended with optional `intent_code` field per rule
 - [x] Unit tests for all `IntentCode` variants with synthetic metric inputs
+- [x] Optional SLM integration: secondary classification pass via `llama.cpp` (FFI or subprocess) when `intent_confidence < 0.6`; gated behind `compression.use_slm = true` config flag
 
 -----
 
@@ -189,6 +190,8 @@ of recent biometric history without querying the agent first.
 - [x] `POST /v1/memory` — body: `{ topic, summary, context_snapshot? }` — writes a Semantic record,
   auto-attaches current physiological state from `latest_context`
 - [x] `GET /v1/memory?topic=&since=&until=&kind=&limit=` — returns `Vec<MemoryRecord>` matching query
+- [x] `GET /v1/memory/{id}` — retrieve a single memory record by ID (optional feature)
+- [x] `DELETE /v1/memory/{id}` — remove a specific memory record (optional feature)
 - [x] Both endpoints wired into `routes.rs` and protected by existing auth middleware
 
 ### 9.5 — Config ✅

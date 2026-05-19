@@ -95,6 +95,11 @@ context_history_size = 32
 # filtered — compression-filtered events (delta + debounce applied)
 # semantic — ContextSnapshot only; no raw events (recommended for AI agents)
 context_tier = "semantic"
+# Optional: enable lightweight local SLM (llama.cpp) as secondary synthesis pass
+# when intent_confidence < 0.6. Requires llama.cpp installed and accessible.
+# use_slm = false
+# slm_path = "/usr/local/bin/llama-cli"
+# slm_model = "/path/to/model.gguf"
 
 # Per-metric temporal debounce (milliseconds).
 # Events arriving faster than this window are dropped.
