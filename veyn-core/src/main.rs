@@ -86,12 +86,26 @@ async fn main() -> Result<()> {
 
     let cfg = config::load(cli.config.as_deref(), cli.port, cli.no_auth)?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| cfg.log_level.as_str().into()),
-        )
-        .init();
+    let use_json = std::env::var("VEYN_LOG_FORMAT")
+        .map(|v| v.to_lowercase() == "json")
+        .unwrap_or(false);
+
+    if use_json {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| cfg.log_level.as_str().into()),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| cfg.log_level.as_str().into()),
+            )
+            .init();
+    }
 
     info!(
         api_port              = cfg.api_port,
@@ -239,6 +253,15 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Audio adapter (15.2 RMS/Peak capture).
+    if cfg.audio_enabled {
+        spawn_adapter(
+            veyn_adapters::audio::AudioAdapter::new(),
+            event_tx.clone(),
+            state.clone(),
+        );
+    }
+
     // Serial adapter.
     if let Some(ref serial_port) = cfg.serial_port {
         spawn_adapter(
@@ -277,6 +300,31 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             if let Err(e) = veyn_adapters::mqtt::run(rx, mqtt_url).await {
                 error!("MQTT bridge error: {}", e);
+            }
+        });
+    }
+
+    // 15.1 — MQTT intent-to-action rules bridge.
+    if let Some(mqtt_url) = cfg.mqtt_url.clone() {
+        let rules = veyn_adapters::mqtt_intent::load_mqtt_rules(&cfg.rules_path);
+        if !rules.is_empty() {
+            let rx = state.context_broadcast_tx.subscribe();
+            info!(rule_count = rules.len(), "starting MQTT intent bridge");
+            tokio::spawn(async move {
+                if let Err(e) = veyn_adapters::mqtt_intent::run(rx, mqtt_url, rules).await {
+                    error!("MQTT intent bridge error: {}", e);
+                }
+            });
+        }
+    }
+
+    // 15.2 — OSC output adapter (push z-scores + intent to DAW/VJ).
+    if let Ok(osc_dest) = std::env::var("VEYN_OSC_OUTPUT_HOST") {
+        let rx = state.context_broadcast_tx.subscribe();
+        info!(dest = %osc_dest, "starting OSC output adapter");
+        tokio::spawn(async move {
+            if let Err(e) = veyn_adapters::osc_output::run(rx, osc_dest).await {
+                error!("OSC output adapter error: {}", e);
             }
         });
     }

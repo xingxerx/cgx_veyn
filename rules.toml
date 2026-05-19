@@ -244,3 +244,39 @@ confidence  = 0.68
 metric    = "occupancy"
 op        = "below"
 threshold = 0.5
+
+# ── 15.1: MQTT Intent-to-Action output rules ─────────────────────────────────
+# These fire when the intent_code transitions.  Each rule publishes the given
+# payload to the MQTT topic.  `debounce_ms` prevents repeated fires.
+# Requires `[mqtt] url = "mqtt://..."` in veyn.toml.
+
+[[mqtt_output]]
+intent_code = "stress_response"
+topic       = "homeassistant/scene/activate"
+payload     = '{"scene": "calm", "transition": 5}'
+debounce_ms = 30000
+
+[[mqtt_output]]
+intent_code = "fatigue"
+topic       = "homeassistant/scene/activate"
+payload     = '{"scene": "wind_down", "transition": 10}'
+debounce_ms = 60000
+
+[[mqtt_output]]
+intent_code = "cognitive_load"
+topic       = "homeassistant/scene/activate"
+payload     = '{"scene": "focus", "transition": 3}'
+debounce_ms = 30000
+
+[[mqtt_output]]
+intent_code = "recovery"
+topic       = "homeassistant/scene/activate"
+payload     = '{"scene": "energize", "transition": 5}'
+debounce_ms = 45000
+
+[[mqtt_output]]
+intent_code = "approach"
+topic       = "homeassistant/light/office/brightness"
+payload     = '{"brightness": 255}'
+debounce_ms = 15000
+

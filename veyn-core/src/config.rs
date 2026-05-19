@@ -58,6 +58,11 @@ struct TomlSecurity {
     audit_log_path: Option<String>,
     strip_raw_hid: Option<bool>,
     rate_limit_rps: Option<u32>,
+    // 17.1 — mTLS fields
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+    tls_ca: Option<String>,
+    mtls_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -69,6 +74,7 @@ struct TomlAdapters {
     evdev: Option<bool>,
     hidraw: Option<bool>,
     midi: Option<bool>,
+    audio: Option<bool>,
     serial_port: Option<String>,
     serial_baud: Option<u32>,
     fs_watch_paths: Option<Vec<String>>,
@@ -84,6 +90,10 @@ struct TomlLogging {
 #[derive(Debug, Deserialize, Default)]
 struct TomlPlugins {
     dir: Option<String>,
+    // 17.2 — plugin registry & WASM limits
+    registry_path: Option<String>,
+    wasm_max_memory_mb: Option<u32>,
+    wasm_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -127,6 +137,7 @@ pub struct Config {
     pub evdev_enabled: bool,
     pub hidraw_enabled: bool,
     pub midi_enabled: bool,
+    pub audio_enabled: bool,
     pub serial_port: Option<String>,
     pub serial_baud: u32,
     pub fs_watch_paths: Vec<String>,
@@ -160,6 +171,24 @@ pub struct Config {
     /// Maximum number of Ambient records to retain; oldest are pruned when exceeded.
     /// Semantic records are never auto-pruned.
     pub memory_max_records: usize,
+
+    // ── 17.1 mTLS ─────────────────────────────────────────────────────────────
+    /// Path to TLS certificate PEM file.
+    pub tls_cert: Option<String>,
+    /// Path to TLS private key PEM file.
+    pub tls_key: Option<String>,
+    /// Path to CA certificate PEM for client verification (mTLS).
+    pub tls_ca: Option<String>,
+    /// Require mutual TLS — clients must present a valid certificate.
+    pub mtls_enabled: bool,
+
+    // ── 17.2 Plugin registry ──────────────────────────────────────────────────
+    /// Path to plugin registry TOML file.
+    pub registry_path: String,
+    /// Maximum WASM plugin memory (MB). 0 = unlimited.
+    pub wasm_max_memory_mb: u32,
+    /// Maximum WASM plugin execution time (ms). 0 = unlimited.
+    pub wasm_timeout_ms: u64,
 }
 
 impl Default for Config {
@@ -174,6 +203,7 @@ impl Default for Config {
             evdev_enabled: false,
             hidraw_enabled: false,
             midi_enabled: false,
+            audio_enabled: false,
             serial_port: None,
             serial_baud: 115200,
             fs_watch_paths: Vec::new(),
@@ -197,6 +227,13 @@ impl Default for Config {
             memory_enabled: true,
             memory_ambient_interval_secs: 900,
             memory_max_records: 10_000,
+            tls_cert: None,
+            tls_key: None,
+            tls_ca: None,
+            mtls_enabled: false,
+            registry_path: "registry.toml".to_string(),
+            wasm_max_memory_mb: 64,
+            wasm_timeout_ms: 5_000,
         }
     }
 }
@@ -283,6 +320,9 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     if let Some(v) = file.adapters.midi {
         cfg.midi_enabled = v;
     }
+    if let Some(v) = file.adapters.audio {
+        cfg.audio_enabled = v;
+    }
     if let Some(v) = file.adapters.serial_port {
         cfg.serial_port = Some(v);
     }
@@ -333,6 +373,29 @@ pub fn load(toml_path: Option<&str>, cli_port: Option<u16>, cli_no_auth: bool) -
     }
     if let Some(v) = file.memory.max_records {
         cfg.memory_max_records = v;
+    }
+    // 17.1 — mTLS
+    if let Some(v) = file.security.tls_cert {
+        cfg.tls_cert = Some(v);
+    }
+    if let Some(v) = file.security.tls_key {
+        cfg.tls_key = Some(v);
+    }
+    if let Some(v) = file.security.tls_ca {
+        cfg.tls_ca = Some(v);
+    }
+    if let Some(v) = file.security.mtls_enabled {
+        cfg.mtls_enabled = v;
+    }
+    // 17.2 — Plugin registry
+    if let Some(v) = file.plugins.registry_path {
+        cfg.registry_path = v;
+    }
+    if let Some(v) = file.plugins.wasm_max_memory_mb {
+        cfg.wasm_max_memory_mb = v;
+    }
+    if let Some(v) = file.plugins.wasm_timeout_ms {
+        cfg.wasm_timeout_ms = v;
     }
 
     // Overlay environment variables.

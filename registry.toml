@@ -1,0 +1,38 @@
+# VEYN Plugin Registry (17.2)
+#
+# This file declares trusted third-party WASM plugins.
+# Each entry specifies the plugin name, expected SHA-256 of the .wasm binary,
+# the source URI, and resource limits.
+#
+# The daemon will only load plugins whose SHA-256 matches this registry,
+# preventing supply-chain attacks.
+
+# ── Example plugin entries ────────────────────────────────────────────────────
+
+[[plugins]]
+name        = "garmin-connect"
+version     = "0.1.0"
+description = "Pull daily wellness metrics from Garmin Connect API"
+sha256      = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+source      = "https://plugins.veyn.dev/garmin-connect-0.1.0.wasm"
+# Per-plugin resource limits (override global defaults from veyn.toml)
+max_memory_mb = 32
+timeout_ms    = 3000
+
+[[plugins]]
+name        = "whoop-sync"
+version     = "0.2.1"
+description = "Sync recovery, strain, and sleep data from WHOOP API"
+sha256      = "0000000000000000000000000000000000000000000000000000000000000000"
+source      = "https://plugins.veyn.dev/whoop-sync-0.2.1.wasm"
+max_memory_mb = 32
+timeout_ms    = 5000
+
+[[plugins]]
+name        = "oura-ring"
+version     = "0.1.0"
+description = "Import sleep stages and readiness scores from Oura Ring API"
+sha256      = "0000000000000000000000000000000000000000000000000000000000000000"
+source      = "local://plugins/oura-ring.wasm"
+max_memory_mb = 16
+timeout_ms    = 2000
