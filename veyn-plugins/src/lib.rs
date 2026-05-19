@@ -155,9 +155,21 @@ fn device_proxy_loop(
             }
         };
         let chunk = buf[..n].to_vec();
-        let map = queues.lock().unwrap();
+        let map = match queues.lock() {
+            Ok(m) => m,
+            Err(e) => {
+                warn!(path = %resolved, "device proxy queues lock poisoned: {}", e);
+                break;
+            }
+        };
         if let Some(queue) = map.get(&handle_id) {
-            let mut q = queue.lock().unwrap();
+            let mut q = match queue.lock() {
+                Ok(q) => q,
+                Err(e) => {
+                    warn!(path = %resolved, "device proxy queue lock poisoned: {}", e);
+                    break;
+                }
+            };
             q.push_back(chunk);
             // Bound queue to 256 chunks to prevent unbounded growth.
             while q.len() > 256 {
