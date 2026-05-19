@@ -363,6 +363,7 @@ mod tests {
 
         assert_eq!(history[2].0, day1_ago_start);
         assert_eq!(history[2].1, 75.0);
+    }
 
     #[test]
     fn test_csv_field() {
