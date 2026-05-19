@@ -100,3 +100,96 @@ impl SessionManager {
         self.current.as_ref().map(|s| Arc::new(s.id.clone()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage;
+    use veyn_schemas::VeynDevice;
+
+    fn setup_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        storage::open_connection(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_session_manager_open_close() {
+        let (tx, mut rx) = broadcast::channel(10);
+        let mut manager = SessionManager::new(tx);
+        let db = setup_db();
+
+        let d1 = VeynDevice {
+            id: "dev_1".to_string(),
+            name: "Device 1".to_string(),
+            source: "generic".to_string(),
+            state: veyn_schemas::DeviceState::Connected,
+            last_seen: 0,
+        };
+
+        // Open first session
+        let s1 = manager.open("test_session_1".to_string(), vec![d1.clone()], Some(&db));
+        assert_eq!(s1.label, "test_session_1");
+        assert_eq!(manager.current_id().unwrap().as_ref(), &s1.id);
+
+        // Check broadcast
+        let boundary = rx.try_recv().unwrap();
+        assert_eq!(boundary.session_id, s1.id);
+        assert!(matches!(boundary.kind, SessionBoundaryKind::Start));
+
+        // Check DB
+        let db_s1 = storage::get_session(&db, &s1.id).unwrap().unwrap();
+        assert_eq!(db_s1.id, s1.id);
+        assert!(db_s1.ended_at.is_none());
+
+        // Open second session (should auto-close first)
+        let s2 = manager.open("test_session_2".to_string(), vec![d1], Some(&db));
+        assert_eq!(s2.label, "test_session_2");
+        assert_eq!(manager.current_id().unwrap().as_ref(), &s2.id);
+
+        // Check broadcasts
+        // 1. End of first session
+        let boundary = rx.try_recv().unwrap();
+        assert_eq!(boundary.session_id, s1.id);
+        assert!(matches!(boundary.kind, SessionBoundaryKind::End));
+
+        // 2. Start of second session
+        let boundary = rx.try_recv().unwrap();
+        assert_eq!(boundary.session_id, s2.id);
+        assert!(matches!(boundary.kind, SessionBoundaryKind::Start));
+
+        // Check DB for first session auto-close
+        let db_s1_closed = storage::get_session(&db, &s1.id).unwrap().unwrap();
+        assert!(db_s1_closed.ended_at.is_some());
+
+        // Close second session explicitly
+        let closed_s2 = manager.close(Some(&db)).unwrap();
+        assert_eq!(closed_s2.id, s2.id);
+        assert!(manager.current_id().is_none());
+
+        // Check broadcast
+        let boundary = rx.try_recv().unwrap();
+        assert_eq!(boundary.session_id, s2.id);
+        assert!(matches!(boundary.kind, SessionBoundaryKind::End));
+
+        // Check DB
+        let db_s2_closed = storage::get_session(&db, &s2.id).unwrap().unwrap();
+        assert!(db_s2_closed.ended_at.is_some());
+    }
+
+    #[test]
+    fn test_session_manager_annotate() {
+        let (tx, _rx) = broadcast::channel(10);
+        let mut manager = SessionManager::new(tx);
+        let db = setup_db();
+
+        assert!(!manager.annotate("test note".to_string(), Some(&db)));
+
+        let s1 = manager.open("test_session".to_string(), vec![], Some(&db));
+
+        assert!(manager.annotate("test note".to_string(), Some(&db)));
+
+        let db_s1 = storage::get_session(&db, &s1.id).unwrap().unwrap();
+        assert_eq!(db_s1.notes.unwrap(), "test note");
+    }
+}
