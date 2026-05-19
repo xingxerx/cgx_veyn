@@ -148,6 +148,68 @@ components:
         last_seen: { type: integer, format: int64 }
         since_ts:  { type: integer, format: int64 }
 
+    MemoryKind:
+      type: string
+      enum: [ambient, semantic]
+      description: >
+        `ambient` — auto-generated summary from the ambient writer task.
+        `semantic` — explicitly written by an AI agent.
+
+    OutcomeRating:
+      type: string
+      enum: [positive, neutral, negative]
+      description: Outcome rating anchored to a memory record after the session.
+
+    MemoryRecord:
+      type: object
+      required: [id, timestamp_ms, session_id, kind, topic, summary]
+      properties:
+        id:                 { type: string, format: uuid }
+        timestamp_ms:       { type: integer, format: int64 }
+        session_id:         { type: string, format: uuid }
+        kind:               { $ref: "#/components/schemas/MemoryKind" }
+        topic:              { type: string, example: "deep-work" }
+        summary:            { type: string }
+        intent_at_time:     { type: string, nullable: true }
+        confidence_at_time: { type: number, format: double, nullable: true }
+        hrv_at_time:        { type: number, format: double, nullable: true }
+        hr_at_time:         { type: number, format: double, nullable: true }
+        context_snapshot:   { type: object, nullable: true, additionalProperties: true }
+        outcome_rating:     { $ref: "#/components/schemas/OutcomeRating", nullable: true }
+        outcome_notes:      { type: string, nullable: true }
+        outcome_at_ms:      { type: integer, format: int64, nullable: true }
+
+    PatternRecord:
+      type: object
+      required: [topic, sample_count, intent_distribution, last_seen_ms, computed_at_ms]
+      properties:
+        topic:                { type: string, example: "deep-work" }
+        sample_count:         { type: integer, example: 12 }
+        avg_hr:               { type: number, format: double, nullable: true }
+        avg_hrv:              { type: number, format: double, nullable: true }
+        dominant_intent:      { type: string, nullable: true, example: "cognitive_load" }
+        intent_distribution:
+          type: object
+          additionalProperties: { type: number, format: double }
+          description: Intent code → frequency (0.0–1.0).
+          example: { "cognitive_load": 0.7, "neutral": 0.3 }
+        peak_hour:            { type: integer, minimum: 0, maximum: 23, nullable: true }
+        last_seen_ms:         { type: integer, format: int64 }
+        computed_at_ms:       { type: integer, format: int64 }
+
+    TemporalSignal:
+      type: object
+      required: [metric, trend, slope_per_min, window_secs, confidence, samples]
+      properties:
+        metric:        { type: string, example: "heart_rate" }
+        trend:
+          type: string
+          enum: [stable, rising, falling, spiking, declining, recovering]
+        slope_per_min: { type: number, format: double, description: "Rate of change per minute in metric units." }
+        window_secs:   { type: integer, description: "Length of the analysis window in seconds." }
+        confidence:    { type: number, format: double, minimum: 0.0, maximum: 1.0, description: "R² of linear fit." }
+        samples:       { type: integer, description: "Number of samples used." }
+
     ErrorResponse:
       type: object
       required: [error]
@@ -570,3 +632,190 @@ paths:
               schema: { $ref: "#/components/schemas/BaselineStats" }
         "404":
           description: No baseline data for this device/metric pair
+
+  /v1/baseline/{device_id}/{metric}/history:
+    get:
+      summary: Daily baseline history for a metric
+      description: Returns UTC-day mean values over the requested window.
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema: { type: string }
+          example: ble:AA:BB:CC:DD
+        - name: metric
+          in: path
+          required: true
+          schema: { type: string }
+          example: heart_rate
+        - name: days
+          in: query
+          schema: { type: integer, default: 30, minimum: 1, maximum: 365 }
+          description: Number of past days to return (default 30).
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  device_id: { type: string }
+                  metric:    { type: string }
+                  days:      { type: integer }
+                  history:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ts:   { type: integer, format: int64, description: "Day-start Unix ms." }
+                        mean: { type: number, format: double }
+
+  /v1/session/{id}/export:
+    get:
+      summary: Export session events as CSV
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv], default: csv }
+      responses:
+        "200":
+          description: CSV file with columns timestamp_ms, device_id, metric, value, unit
+          content:
+            text/csv:
+              schema: { type: string }
+        "404":
+          description: Session not found
+
+  /v1/temporal/patterns:
+    get:
+      summary: Temporal trend signals for all active metrics
+      description: >
+        Returns trend analysis for each metric that has accumulated sufficient
+        data in the sliding 20-minute window.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  patterns:
+                    type: array
+                    items: { $ref: "#/components/schemas/TemporalSignal" }
+                  count: { type: integer }
+
+  /v1/memory:
+    post:
+      summary: Write a semantic memory record
+      description: >
+        The daemon automatically attaches the current biometric state (HRV, HR,
+        intent, confidence) to the record.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, summary]
+              properties:
+                topic:            { type: string, example: "code-review" }
+                summary:          { type: string }
+                context_snapshot: { type: object, nullable: true, additionalProperties: true }
+      responses:
+        "201":
+          description: Memory record created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemoryRecord" }
+        "503":
+          description: Memory layer disabled or persistence not available
+    get:
+      summary: Query memory records
+      parameters:
+        - name: topic
+          in: query
+          schema: { type: string }
+          description: Filter by exact topic label.
+        - name: since
+          in: query
+          schema: { type: integer, format: int64 }
+          description: Return records at or after this Unix-ms timestamp.
+        - name: until
+          in: query
+          schema: { type: integer, format: int64 }
+          description: Return records at or before this Unix-ms timestamp.
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/MemoryKind" }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 1000 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  records:
+                    type: array
+                    items: { $ref: "#/components/schemas/MemoryRecord" }
+                  count: { type: integer }
+
+  /v1/memory/{id}/outcome:
+    patch:
+      summary: Anchor an outcome rating to a memory record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome_rating]
+              properties:
+                outcome_rating: { $ref: "#/components/schemas/OutcomeRating" }
+                notes:          { type: string, nullable: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:       { type: string }
+                  anchored: { type: boolean }
+        "404":
+          description: Memory record not found
+
+  /v1/patterns:
+    get:
+      summary: Topic-level physiological patterns (veyn-insight)
+      description: >
+        Analyses all memory records grouped by topic and returns computed
+        physiological statistics — average HR/HRV, dominant intent code,
+        intent distribution, and peak work hour.
+      parameters:
+        - name: min_samples
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+          description: Minimum memory records required to include a topic.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  patterns:
+                    type: array
+                    items: { $ref: "#/components/schemas/PatternRecord" }
+                  count: { type: integer }

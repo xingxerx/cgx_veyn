@@ -1,5 +1,5 @@
 [workspace]
-members = ["veyn-schemas", "veyn-adapters", "veyn-core", "veyn-plugins", "veyn-mcp", "sdk"]
+members = ["veyn-schemas", "veyn-adapters", "veyn-core", "veyn-plugins", "veyn-mcp", "veyn-insight", "sdk"]
 resolver = "2"
 
 [workspace.dependencies]

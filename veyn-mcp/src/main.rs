@@ -187,6 +187,30 @@ fn tool_list() -> Value {
                     },
                     "required": []
                 }
+            },
+            {
+                "name": "veyn_anchor_outcome",
+                "description": "Attach an outcome rating to a past memory record (positive/neutral/negative). Use this after a session completes to record whether the biometric state correlated with a good or bad outcome.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id":             { "type": "string", "description": "Memory record ID returned by veyn_write_memory." },
+                        "outcome_rating": { "type": "string", "description": "Outcome: 'positive', 'neutral', or 'negative'.", "enum": ["positive", "neutral", "negative"] },
+                        "notes":          { "type": "string", "description": "Optional free-text annotation about the outcome." }
+                    },
+                    "required": ["id", "outcome_rating"]
+                }
+            },
+            {
+                "name": "veyn_get_patterns",
+                "description": "Return physiological patterns grouped by topic — average HR/HRV, dominant intent, peak work hour, and intent distribution. Useful for understanding which contexts correlate with different biometric states.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "min_samples": { "type": "integer", "description": "Minimum memory records required to include a topic (default 1).", "default": 1 }
+                    },
+                    "required": []
+                }
             }
         ]
     })
@@ -261,6 +285,24 @@ impl VeynClient {
             .with_context(|| format!("parse POST {url}"))?;
         if !status.is_success() {
             anyhow::bail!("HTTP {status} on POST {path}: {body}");
+        }
+        Ok(body)
+    }
+
+    async fn patch(&self, path: &str, payload: Value) -> Result<Value> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.http.patch(&url).json(&payload);
+        if let Some(t) = &self.token {
+            req = req.bearer_auth(t);
+        }
+        let resp = req.send().await.with_context(|| format!("PATCH {url}"))?;
+        let status = resp.status();
+        let body: Value = resp
+            .json()
+            .await
+            .with_context(|| format!("parse PATCH {url}"))?;
+        if !status.is_success() {
+            anyhow::bail!("HTTP {status} on PATCH {path}: {body}");
         }
         Ok(body)
     }
@@ -370,6 +412,32 @@ async fn dispatch_tool(client: &VeynClient, name: &str, args: &Value) -> Result<
             parts.push(format!("limit={limit}"));
 
             let path = format!("/v1/memory?{}", parts.join("&"));
+            client.get(&path).await
+        }
+        "veyn_anchor_outcome" => {
+            let id = args
+                .get("id")
+                .and_then(Value::as_str)
+                .context("missing: id")?;
+            let outcome_rating = args
+                .get("outcome_rating")
+                .and_then(Value::as_str)
+                .context("missing: outcome_rating")?;
+            let mut payload = json!({ "outcome_rating": outcome_rating });
+            if let Some(notes) = args.get("notes").and_then(Value::as_str) {
+                payload["notes"] = json!(notes);
+            }
+            client
+                .patch(&format!("/v1/memory/{}/outcome", urlencoded(id)), payload)
+                .await
+        }
+        "veyn_get_patterns" => {
+            let min_samples = args.get("min_samples").and_then(Value::as_u64);
+            let path = if let Some(n) = min_samples {
+                format!("/v1/patterns?min_samples={n}")
+            } else {
+                "/v1/patterns".to_string()
+            };
             client.get(&path).await
         }
         _ => anyhow::bail!("unknown tool '{name}'"),
