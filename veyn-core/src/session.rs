@@ -64,7 +64,8 @@ impl SessionManager {
     }
 
     fn close_internal(&self, mut session: Session, db: Option<&rusqlite::Connection>) -> Session {
-        session.ended_at = Some(chrono::Utc::now().timestamp_millis());
+        let now = chrono::Utc::now().timestamp_millis();
+        session.ended_at = Some(now);
 
         if let Some(conn) = db {
             if let Err(e) = storage::update_session(conn, &session) {
@@ -75,7 +76,7 @@ impl SessionManager {
         let boundary = SessionBoundary {
             session_id: session.id.clone(),
             kind: SessionBoundaryKind::End,
-            ts: session.ended_at.unwrap(),
+            ts: now,
             label: session.label.clone(),
         };
         let _ = self.boundary_tx.send(boundary);
