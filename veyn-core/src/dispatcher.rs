@@ -63,23 +63,35 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
 
         // Update baseline and temporal windows with this sample.
         {
-            let mut baseline = state.baseline_engine.lock().unwrap();
+            let mut baseline = state.baseline_engine.lock().unwrap_or_else(|e| {
+                warn!("lock poisoned: {}", e);
+                e.into_inner()
+            });
             baseline.update(&event.device_id, &event.metric, event.value);
         }
         {
-            let mut temporal = state.temporal_engine.lock().unwrap();
+            let mut temporal = state.temporal_engine.lock().unwrap_or_else(|e| {
+                warn!("lock poisoned: {}", e);
+                e.into_inner()
+            });
             temporal.push(&event.metric, event.ts, event.value);
         }
 
         // Persist event to SQLite if a session is open.
         let recording_session_id = {
-            let sm = state.session_manager.lock().unwrap();
+            let sm = state.session_manager.lock().unwrap_or_else(|e| {
+                warn!("lock poisoned: {}", e);
+                e.into_inner()
+            });
             sm.current_id()
         };
 
         if let Some(ref sid) = recording_session_id {
             if let Some(ref db_arc) = state.db {
-                let conn = db_arc.lock().unwrap();
+                let conn = db_arc.lock().unwrap_or_else(|e| {
+                    warn!("lock poisoned: {}", e);
+                    e.into_inner()
+                });
                 if let Err(e) = crate::storage::insert_event(&conn, &event, Some(sid)) {
                     warn!("failed to persist event to SQLite: {}", e);
                 }
@@ -100,7 +112,10 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
 
         // Build metric state and deltas + compute z-scores in a single lock scope.
         let (metric_state, deltas, z_scores) = {
-            let metrics = state.latest_metrics.lock().unwrap();
+            let metrics = state.latest_metrics.lock().unwrap_or_else(|e| {
+                warn!("lock poisoned: {}", e);
+                e.into_inner()
+            });
             let metric_state: HashMap<String, f64> = metrics
                 .values()
                 .map(|e| (e.metric.clone(), e.value))
@@ -121,14 +136,26 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
             let z_scores = state
                 .baseline_engine
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| {
+                    warn!("lock poisoned: {}", e);
+                    e.into_inner()
+                })
                 .z_scores(&metric_state);
             (metric_state, deltas, z_scores)
         };
 
         let (intent, intent_code, intent_confidence) = engine.synthesize(&metric_state, &z_scores);
 
-        let active_devices: Vec<String> = state.devices.lock().unwrap().keys().cloned().collect();
+        let active_devices: Vec<String> = state
+            .devices
+            .lock()
+            .unwrap_or_else(|e| {
+                warn!("lock poisoned: {}", e);
+                e.into_inner()
+            })
+            .keys()
+            .cloned()
+            .collect();
 
         let baseline_delta = if z_scores.is_empty() {
             None
@@ -136,7 +163,14 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
             Some(z_scores)
         };
 
-        let temporal_patterns = state.temporal_engine.lock().unwrap().get_patterns();
+        let temporal_patterns = state
+            .temporal_engine
+            .lock()
+            .unwrap_or_else(|e| {
+                warn!("lock poisoned: {}", e);
+                e.into_inner()
+            })
+            .get_patterns();
 
         let snapshot = ContextSnapshot {
             timestamp_ms: chrono::Utc::now().timestamp_millis(),
@@ -154,7 +188,10 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
 
         state.update_context(snapshot);
 
-        *state.compression_ratio.lock().unwrap() = engine.compression_ratio();
+        *state.compression_ratio.lock().unwrap_or_else(|e| {
+            warn!("lock poisoned: {}", e);
+            e.into_inner()
+        }) = engine.compression_ratio();
 
         // Periodically flush baseline samples to SQLite.
         if last_baseline_persist.elapsed() >= BASELINE_PERSIST_INTERVAL {
@@ -162,13 +199,19 @@ pub async fn run(mut rx: mpsc::Receiver<VeynEvent>, state: AppState, jsonl_path:
             if let Some(ref db_arc) = state.db {
                 // Snapshot current metrics for persisting to baseline table.
                 let metrics_snap: Vec<(String, String, i64, f64)> = {
-                    let metrics = state.latest_metrics.lock().unwrap();
+                    let metrics = state.latest_metrics.lock().unwrap_or_else(|e| {
+                        warn!("lock poisoned: {}", e);
+                        e.into_inner()
+                    });
                     metrics
                         .values()
                         .map(|e| (e.device_id.clone(), e.metric.clone(), e.ts, e.value))
                         .collect()
                 };
-                let conn = db_arc.lock().unwrap();
+                let conn = db_arc.lock().unwrap_or_else(|e| {
+                    warn!("lock poisoned: {}", e);
+                    e.into_inner()
+                });
                 for (dev, met, ts, val) in metrics_snap {
                     if let Err(e) =
                         crate::storage::insert_baseline_sample(&conn, &dev, &met, ts, val)
