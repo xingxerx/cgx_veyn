@@ -44,7 +44,9 @@ impl PluginRuntime {
 
         // Pre-create queues for each declared device descriptor.
         {
-            let mut map = device_queues.lock().unwrap();
+            let mut map = device_queues
+                .lock()
+                .map_err(|e| anyhow::anyhow!("mutex poisoned: {}", e))?;
             for desc in &manifest.devices {
                 map.insert(
                     desc.id.clone(),
@@ -175,9 +177,15 @@ impl PluginRuntime {
                     };
 
                     let chunk = {
-                        let map = queues.lock().unwrap();
+                        let map = match queues.lock() {
+                            Ok(m) => m,
+                            Err(_) => return -1, // mutex poisoned
+                        };
                         if let Some(queue) = map.get(&device_id) {
-                            queue.lock().unwrap().pop_front()
+                            match queue.lock() {
+                                Ok(mut q) => q.pop_front(),
+                                Err(_) => return -1, // mutex poisoned
+                            }
                         } else {
                             return -1; // unknown handle
                         }
