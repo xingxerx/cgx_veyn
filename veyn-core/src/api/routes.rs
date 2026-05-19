@@ -79,7 +79,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/temporal/patterns", get(temporal_patterns))
         // Memory layer (Phase 9)
         .route("/v1/memory", post(memory_write))
-        .route("/v1/memory", get(memory_query));
+        .route("/v1/memory", get(memory_query))
+        .route("/v1/memory/:id", get(memory_get))
+        .route("/v1/memory/:id", axum::routing::delete(memory_delete));
 
     legacy.merge(v1).with_state(state)
 }
@@ -1161,6 +1163,66 @@ async fn memory_write(
                 Ok(()) => (
                     StatusCode::CREATED,
                     Json(serde_json::to_value(&record).unwrap()),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/memory/{id} ───────────────────────────────────────────────────────
+
+async fn memory_get(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let store =
+                crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
+            match store.get(&id) {
+                Ok(Some(record)) => {
+                    (StatusCode::OK, Json(serde_json::to_value(&record).unwrap())).into_response()
+                }
+                Ok(None) => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "record not found" })),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": e.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── DELETE /v1/memory/{id} ────────────────────────────────────────────────────
+
+async fn memory_delete(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let store =
+                crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
+            match store.delete(&id) {
+                Ok(true) => StatusCode::NO_CONTENT.into_response(),
+                Ok(false) => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "record not found" })),
                 )
                     .into_response(),
                 Err(e) => (
