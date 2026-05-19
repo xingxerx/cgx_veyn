@@ -313,6 +313,56 @@ fn csv_field(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        open_connection(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_load_baseline_daily_history() {
+        let conn = setup_test_db();
+        let device_id = "test-device";
+        let metric = "hr";
+        let ms_per_day: i64 = 86_400_000;
+
+        // Base timestamp: 3 days ago from now
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let day3_ago_start = (now_ms - 3 * ms_per_day) / ms_per_day * ms_per_day;
+        let day2_ago_start = (now_ms - 2 * ms_per_day) / ms_per_day * ms_per_day;
+        let day1_ago_start = (now_ms - ms_per_day) / ms_per_day * ms_per_day;
+
+        // Day 3 ago data
+        insert_baseline_sample(&conn, device_id, metric, day3_ago_start + 1000, 70.0).unwrap();
+        insert_baseline_sample(&conn, device_id, metric, day3_ago_start + 2000, 72.0).unwrap(); // mean: 71.0
+
+        // Day 2 ago data
+        insert_baseline_sample(&conn, device_id, metric, day2_ago_start + 1000, 65.0).unwrap();
+        insert_baseline_sample(&conn, device_id, metric, day2_ago_start + 2000, 69.0).unwrap();
+        insert_baseline_sample(&conn, device_id, metric, day2_ago_start + 3000, 70.0).unwrap(); // mean: 68.0
+
+        // Day 1 ago data (only 1 point)
+        insert_baseline_sample(&conn, device_id, metric, day1_ago_start + 1000, 75.0).unwrap(); // mean: 75.0
+
+        // Data outside the window (e.g. 10 days ago) should not be returned if we ask for `window_days = 5`
+        let day10_ago_start = (now_ms - 10 * ms_per_day) / ms_per_day * ms_per_day;
+        insert_baseline_sample(&conn, device_id, metric, day10_ago_start + 1000, 100.0).unwrap();
+
+        // Let's test window of 5 days
+        let history = load_baseline_daily_history(&conn, device_id, metric, 5).unwrap();
+
+        assert_eq!(history.len(), 3);
+
+        assert_eq!(history[0].0, day3_ago_start);
+        assert_eq!(history[0].1, 71.0);
+
+        assert_eq!(history[1].0, day2_ago_start);
+        assert_eq!(history[1].1, 68.0);
+
+        assert_eq!(history[2].0, day1_ago_start);
+        assert_eq!(history[2].1, 75.0);
 
     #[test]
     fn test_csv_field() {
