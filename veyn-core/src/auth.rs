@@ -263,7 +263,8 @@ pub async fn require_bearer(
     }
 
     let path = req.uri().path();
-    if path == "/health" || path == "/v1/health" {
+    // Always-public endpoints: liveness probe + loopback-only broadcast (14.3).
+    if path == "/health" || path == "/v1/health" || path == "/v1/context/broadcast" {
         return next.run(req).await;
     }
 

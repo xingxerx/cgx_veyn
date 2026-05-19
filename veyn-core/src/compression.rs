@@ -186,6 +186,40 @@ impl CompressionEngine {
     }
 }
 
+// ── Rule simulation helper (15.3) ────────────────────────────────────────────
+
+/// Load rules from `path` and evaluate against `deltas`, returning
+/// `(intent, intent_code, confidence)`.  Used by the `/v1/rules/simulate`
+/// endpoint without requiring a full `CompressionEngine` instance.
+pub fn evaluate_rules_from_path(
+    path: &str,
+    deltas: &[veyn_schemas::StateDelta],
+) -> (String, IntentCode, f32) {
+    let state: HashMap<String, f64> = deltas.iter().map(|d| (d.metric.clone(), d.value)).collect();
+
+    let rules: Vec<SemanticRule> = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| toml::from_str::<RulesFile>(&s).ok())
+        .map(|f| f.rules)
+        .unwrap_or_default();
+
+    for rule in &rules {
+        if rule.conditions.iter().all(|c| {
+            state.get(&c.metric).is_some_and(|&v| match c.op.as_str() {
+                "above" => v > c.threshold,
+                "below" => v < c.threshold,
+                "equals" => (v - c.threshold).abs() < 0.01,
+                _ => false,
+            })
+        }) {
+            let code = rule.intent_code.clone().unwrap_or(IntentCode::Neutral);
+            return (rule.intent.clone(), code, rule.confidence as f32);
+        }
+    }
+
+    ("neutral".to_string(), IntentCode::Neutral, 0.5)
+}
+
 // ── Intero z-score classification ─────────────────────────────────────────────
 
 /// Classify intent from physiological z-scores relative to personal baseline.

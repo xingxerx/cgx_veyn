@@ -63,9 +63,9 @@ Build order: **11 (Intero) → 12 (Somatic Shell) → 13 (Inference Gov) → 14 
 ## 14. 🟡 High: Body-Aware Computing Layer
 > Delivers: multi-app ambient context
 
-- [ ] **14.1 Multi-client subscription layer**: Add `client_id` tracking. Namespaced filter DSLs for concurrent local apps (e.g., DAW plugin + focus timer). `GET /v1/clients` debug endpoint.
-- [ ] **14.2 Adaptive AI agent integration**: `veyn_suggest_action` MCP tool (validates proposed actions against current physiology). `context_degraded` SSE fallback events.
-- [ ] **14.3 Ambient state broadcast**: Lightweight, loopback-only, auth-less `GET /v1/context/broadcast` SSE endpoint for zero-config trusted local apps.
+- [x] **14.1 Multi-client subscription layer**: Add `client_id` tracking. Namespaced filter DSLs for concurrent local apps (e.g., DAW plugin + focus timer). `GET /v1/clients` debug endpoint.
+- [x] **14.2 Adaptive AI agent integration**: `veyn_suggest_action` MCP tool (validates proposed actions against current physiology). `context_degraded` SSE fallback events.
+- [x] **14.3 Ambient state broadcast**: Lightweight, loopback-only, auth-less `GET /v1/context/broadcast` SSE endpoint for zero-config trusted local apps.
 
 ---
 
@@ -74,15 +74,15 @@ Build order: **11 (Intero) → 12 (Somatic Shell) → 13 (Inference Gov) → 14 
 
 - [ ] **15.1 MQTT rules engine**: `[mqtt_output]` block in `rules.toml` mapping `intent_code` transitions to MQTT topic/payload pairs (e.g., `StressResponse` -> scene="calm"). Add rule debounce timers.
 - [ ] **15.2 Multimedia Sinks**: Compile the `cpal` audio adapter for ambient RMS/peak ingestion. Develop the OSC output adapter to push live somatic z-scores down to DAW/VJ software.
-- [ ] **15.3 Feedback loop tooling**: `POST /v1/rules/simulate` endpoint for rule testing. `rules.toml` MQTT hot-reload. Home Assistant integration guide.
+- [x] **15.3 Feedback loop tooling**: `POST /v1/rules/simulate` endpoint for rule testing. `rules.toml` MQTT hot-reload. Home Assistant integration guide.
 
 ---
 
 ## 16. 🟢 Nice-to-have: Longitudinal Analysis Pipeline
 > Delivers: empirical RnD tools · compounding accuracy
 
-- [ ] **16.1 Batch export API**: `GET /v1/export` full-resolution windows. `GET /v1/sessions/compare` multi-channel timelines for A/B testing past decisions.
-- [ ] **16.2 Baseline intelligence**: `baseline_drift` SSE events when 7-day averages deviate > 1.5σ from 30-day norms. `GET /v1/baseline/summary` endpoint.
+- [x] **16.1 Batch export API**: `GET /v1/export` full-resolution windows. `GET /v1/sessions/compare` multi-channel timelines for A/B testing past decisions.
+- [x] **16.2 Baseline intelligence**: `baseline_drift` SSE events when 7-day averages deviate > 1.5σ from 30-day norms. `GET /v1/baseline/summary` endpoint.
 - [ ] **16.3 Research notebooks**: Jupyter files for HRV longitudinal mapping (`hrv_longitudinal.ipynb`) and session retrospective overlays.
 
 ---

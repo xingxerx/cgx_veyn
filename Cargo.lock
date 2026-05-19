@@ -3437,6 +3437,7 @@ dependencies = [
  "governor",
  "libc",
  "rand 0.8.6",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

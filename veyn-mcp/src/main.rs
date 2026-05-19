@@ -211,6 +211,33 @@ fn tool_list() -> Value {
                     },
                     "required": []
                 }
+            },
+            {
+                "name": "veyn_suggest_action",
+                "description": "Validate a proposed action against the operator's current biometric state. Returns a recommendation (proceed / defer / block) with physiological justification. Use before high-stakes operations.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "description": "Short description of the action you're about to take (e.g. 'deploy to production', 'send client email', 'merge PR')." },
+                        "risk_level": { "type": "string", "description": "Operator-estimated risk: 'low' | 'medium' | 'high'. Default 'medium'.", "enum": ["low", "medium", "high"], "default": "medium" }
+                    },
+                    "required": ["action"]
+                }
+            },
+            {
+                "name": "veyn_get_inference_params",
+                "description": "Return the current Ollama inference hyperparameters (temperature, top_k) being enforced by the modulation engine, plus the active intent_code that triggered them.",
+                "inputSchema": { "type": "object", "properties": {}, "required": [] }
+            },
+            {
+                "name": "veyn_get_coherence",
+                "description": "Return the DGK-IES coherence (κ) density score and whether a Mandatory Logical Reset is active. κ < 0.92 triggers MLR and drops agent execution privileges.",
+                "inputSchema": { "type": "object", "properties": {}, "required": [] }
+            },
+            {
+                "name": "veyn_baseline_summary",
+                "description": "Return a summary of 7-day vs 30-day baseline means per metric, including drift_sigma to detect when recent norms have shifted > 1.5σ from the longer-term baseline.",
+                "inputSchema": { "type": "object", "properties": {}, "required": [] }
             }
         ]
     })
@@ -440,6 +467,73 @@ async fn dispatch_tool(client: &VeynClient, name: &str, args: &Value) -> Result<
             };
             client.get(&path).await
         }
+        // 14.2 — veyn_suggest_action
+        "veyn_suggest_action" => {
+            let action = args
+                .get("action")
+                .and_then(Value::as_str)
+                .context("missing: action")?;
+            let risk_level = args
+                .get("risk_level")
+                .and_then(Value::as_str)
+                .unwrap_or("medium");
+
+            // Fetch current context.
+            let ctx = client.get("/v1/context/current").await?;
+            let intent_code = ctx
+                .get("intent_code")
+                .and_then(Value::as_str)
+                .unwrap_or("neutral");
+            let confidence = ctx.get("confidence").and_then(Value::as_f64).unwrap_or(0.5);
+
+            // Gate logic: block high-risk actions during stress/fatigue.
+            let gate_intents = ["fatigue", "stress_response"];
+            let gated = gate_intents.contains(&intent_code);
+            let high_risk = matches!(risk_level, "high");
+
+            let (recommendation, rationale) = if confidence < 0.4 {
+                (
+                    "defer",
+                    "Confidence too low to make a reliable physiological assessment. Wait for clearer signal.",
+                )
+            } else if gated && high_risk {
+                (
+                    "block",
+                    "High-risk action blocked: operator biometric state indicates fatigue or stress response. Defer until recovery.",
+                )
+            } else if gated {
+                (
+                    "defer",
+                    "Operator shows fatigue or stress. Consider deferring non-urgent actions.",
+                )
+            } else if intent_code == "cognitive_load" && high_risk {
+                (
+                    "proceed_with_caution",
+                    "Operator is in cognitive load state. Double-check before committing.",
+                )
+            } else {
+                (
+                    "proceed",
+                    "Biometric state is within acceptable bounds for this action.",
+                )
+            };
+
+            Ok(json!({
+                "action":         action,
+                "risk_level":     risk_level,
+                "recommendation": recommendation,
+                "rationale":      rationale,
+                "intent_code":    intent_code,
+                "confidence":     confidence,
+            }))
+        }
+        // 13.1 — inference params
+        "veyn_get_inference_params" => client.get("/v1/inference/params").await,
+        // 13.3 — coherence
+        "veyn_get_coherence" => client.get("/v1/coherence").await,
+        // 16.2 — baseline summary
+        "veyn_baseline_summary" => client.get("/v1/baseline/summary").await,
+
         _ => anyhow::bail!("unknown tool '{name}'"),
     }
 }

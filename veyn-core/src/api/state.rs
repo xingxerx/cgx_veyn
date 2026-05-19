@@ -15,9 +15,30 @@ use veyn_schemas::{
 
 use crate::auth::ScopedToken;
 use crate::baseline::BaselineEngine;
+use crate::coherence::CoherenceState;
 use crate::config::Config;
+use crate::inference::InferenceState;
 use crate::session::SessionManager;
 use crate::temporal::TemporalEngine;
+
+// ── ClientInfo (14.1) ─────────────────────────────────────────────────────────
+
+/// Per-client metadata tracked for every active WebSocket or SSE subscriber.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClientInfo {
+    pub client_id: String,
+    /// ISO-8601 timestamp of when the client connected.
+    pub connected_at: String,
+    /// Unix ms timestamp of when the client connected.
+    pub connected_at_ms: i64,
+    /// Context tier the client is receiving (raw, filtered, semantic).
+    pub tier: String,
+    /// Transport type: "websocket" or "sse".
+    pub transport: String,
+    /// Source class filter applied to this client, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_filter: Option<Vec<String>>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginInfo {
@@ -69,6 +90,12 @@ pub struct AppState {
     pub temporal_engine: Arc<Mutex<TemporalEngine>>,
     /// Optional SQLite connection for session + event persistence.
     pub db: Option<Arc<Mutex<rusqlite::Connection>>>,
+    /// 13.1 — live inference hyperparameter state.
+    pub inference_state: Arc<Mutex<InferenceState>>,
+    /// 13.3 — DGK-IES coherence audit state.
+    pub coherence_state: Arc<Mutex<CoherenceState>>,
+    /// Active connected clients with metadata (14.1 multi-client tracking).
+    pub connected_clients: Arc<Mutex<HashMap<String, ClientInfo>>>,
 }
 
 impl AppState {
@@ -116,6 +143,9 @@ impl AppState {
             baseline_engine,
             temporal_engine,
             db,
+            inference_state: Arc::new(Mutex::new(InferenceState::default())),
+            coherence_state: Arc::new(Mutex::new(CoherenceState::default())),
+            connected_clients: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

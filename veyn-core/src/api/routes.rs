@@ -26,7 +26,7 @@ use veyn_schemas::{
     StateDelta, VeynEvent, VeynNotification,
 };
 
-use super::state::AppState;
+use super::state::{AppState, ClientInfo};
 use crate::auth::TokenClaim;
 use crate::config::ContextTier;
 
@@ -84,7 +84,22 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/memory/:id", get(memory_get))
         .route("/v1/memory/:id", axum::routing::delete(memory_delete))
         // Pattern detection (veyn-insight)
-        .route("/v1/patterns", get(patterns_list));
+        .route("/v1/patterns", get(patterns_list))
+        // 14.1 — multi-client tracking
+        .route("/v1/clients", get(clients_list))
+        // 14.3 — loopback-only auth-less broadcast (checked inside handler)
+        .route("/v1/context/broadcast", get(context_broadcast))
+        // 13.1 — inference params debug read
+        .route("/v1/inference/params", get(inference_params_get))
+        // 13.3 — coherence state debug read
+        .route("/v1/coherence", get(coherence_get))
+        // 15.3 — rules simulate
+        .route("/v1/rules/simulate", post(rules_simulate))
+        // 16.1 — batch export + session compare
+        .route("/v1/export", get(export_all))
+        .route("/v1/sessions/compare", get(sessions_compare))
+        // 16.2 — baseline intelligence
+        .route("/v1/baseline/summary", get(baseline_summary));
 
     legacy.merge(v1).with_state(state)
 }
@@ -277,7 +292,34 @@ async fn context_subscribe(
 
     let min_conf = params.min_confidence.unwrap_or(0.0);
 
+    // 14.1 — Register SSE subscriber as a client.
+    let client_id = Uuid::new_v4().to_string();
+    {
+        let now = chrono::Utc::now();
+        let src_filter = if source_filter.is_empty() {
+            None
+        } else {
+            Some(source_filter.clone())
+        };
+        let info = ClientInfo {
+            client_id: client_id.clone(),
+            connected_at: now.to_rfc3339(),
+            connected_at_ms: now.timestamp_millis(),
+            tier: "semantic".to_string(),
+            transport: "sse".to_string(),
+            source_filter: src_filter,
+        };
+        state
+            .connected_clients
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), info);
+    }
+
     let rx = state.context_broadcast_tx.subscribe();
+    let clients_ref = state.connected_clients.clone();
+    let deregister_id = client_id.clone();
+
     let stream = BroadcastStream::new(rx).filter_map(move |result| {
         let intents = intents.clone();
         let source_filter = source_filter.clone();
@@ -312,8 +354,17 @@ async fn context_subscribe(
                         .retain(|d| allowed.iter().any(|s| s == &d.source_class));
                 }
 
+                // Choose event type: baseline_drift marker > context_degraded > context.
+                let event_name = if matches!(&snapshot.intent_code, IntentCode::Other(s) if s == "baseline_drift") {
+                    "baseline_drift"
+                } else if snapshot.confidence < 0.4 {
+                    "context_degraded"
+                } else {
+                    "context"
+                };
+
                 let json = serde_json::to_string(&snapshot).ok()?;
-                Some(Ok(Event::default().event("context").data(json)))
+                Some(Ok(Event::default().event(event_name).data(json)))
             }
             Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
                 warn!("SSE subscriber lagged {} snapshots", n);
@@ -322,8 +373,43 @@ async fn context_subscribe(
         }
     });
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    // Wrap the stream so the client is deregistered when the SSE connection drops.
+    let guarded_stream = SseDropGuard {
+        inner: stream,
+        clients: clients_ref,
+        client_id: deregister_id,
+    };
+
+    Sse::new(guarded_stream).keep_alive(KeepAlive::default())
 }
+
+/// Wrapper stream that deregisters a client from `connected_clients` on drop.
+struct SseDropGuard<S> {
+    inner: S,
+    clients: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, ClientInfo>>>,
+    client_id: String,
+}
+
+impl<S> Drop for SseDropGuard<S> {
+    fn drop(&mut self) {
+        self.clients.lock().unwrap().remove(&self.client_id);
+    }
+}
+
+impl<S> tokio_stream::Stream for SseDropGuard<S>
+where
+    S: tokio_stream::Stream + Unpin,
+{
+    type Item = S::Item;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
+
 
 fn intent_code_str(code: &IntentCode) -> &str {
     match code {
@@ -346,7 +432,8 @@ async fn ws_stream(
     claim: Option<axum::Extension<TokenClaim>>,
 ) -> impl IntoResponse {
     let tier = effective_tier(&state, claim.as_ref().map(|c| &c.0));
-    ws.on_upgrade(move |socket| handle_socket(socket, state, tier))
+    let client_id = Uuid::new_v4().to_string();
+    ws.on_upgrade(move |socket| handle_socket(socket, state, tier, client_id))
 }
 
 /// Resolve the effective tier: token ceiling takes precedence; falls back to
@@ -450,11 +537,30 @@ impl WsContextFilter {
     }
 }
 
-async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier) {
+async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier, client_id: String) {
     let mut rx = state.broadcast_tx.subscribe();
     let mut cx_rx = state.context_broadcast_tx.subscribe();
     let mut filter = WsEventFilter::default();
     let mut context_filter = WsContextFilter::default();
+
+    // 14.1 — Register this client.
+    {
+        let now = chrono::Utc::now();
+        let tier_str = match &tier {
+            ContextTier::Raw => "raw",
+            ContextTier::Filtered => "filtered",
+            ContextTier::Semantic => "semantic",
+        };
+        let info = ClientInfo {
+            client_id: client_id.clone(),
+            connected_at: now.to_rfc3339(),
+            connected_at_ms: now.timestamp_millis(),
+            tier: tier_str.to_string(),
+            transport: "websocket".to_string(),
+            source_filter: None,
+        };
+        state.connected_clients.lock().unwrap().insert(client_id.clone(), info);
+    }
 
     // For Semantic tier, replay the latest context snapshot instead of raw events.
     if tier == ContextTier::Semantic {
@@ -482,6 +588,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier
                 continue;
             };
             if socket.send(Message::Text(json)).await.is_err() {
+                // 14.1 — Deregister on early disconnect.
+                state.connected_clients.lock().unwrap().remove(&client_id);
                 return;
             }
         }
@@ -577,6 +685,9 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier
             }
         }
     }
+
+    // 14.1 — Deregister this client on disconnect.
+    state.connected_clients.lock().unwrap().remove(&client_id);
 }
 
 // ── Session routes (8.1 + 8.2) ───────────────────────────────────────────────
@@ -1397,6 +1508,324 @@ async fn patterns_list(
                 )
                     .into_response(),
             }
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/clients  (14.1) ───────────────────────────────────────────────────
+
+async fn clients_list(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let clients: Vec<ClientInfo> = state
+        .connected_clients
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    let count = clients.len();
+    Json(json!({ "clients": clients, "count": count }))
+}
+
+// ── GET /v1/context/broadcast  (14.3) ─────────────────────────────────────────
+// Auth-less loopback-only SSE endpoint for trusted local apps.
+
+async fn context_broadcast(
+    State(state): State<AppState>,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+) -> impl IntoResponse {
+    // Loopback guard — only 127.0.0.1 and ::1 may subscribe.
+    if !addr.ip().is_loopback() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "broadcast endpoint is loopback-only" })),
+        )
+            .into_response();
+    }
+
+    let rx = state.context_broadcast_tx.subscribe();
+    let stream =
+        tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|result| match result {
+            Ok(snapshot) => {
+                let event_name = if matches!(&snapshot.intent_code, IntentCode::Other(s) if s == "baseline_drift") {
+                    "baseline_drift"
+                } else if snapshot.confidence < 0.4 {
+                    "context_degraded"
+                } else {
+                    "context"
+                };
+                let json = serde_json::to_string(&snapshot).ok()?;
+                Some(Ok::<_, std::convert::Infallible>(
+                    axum::response::sse::Event::default()
+                        .event(event_name)
+                        .data(json),
+                ))
+            }
+            Err(_) => None,
+        });
+
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
+}
+
+// ── GET /v1/inference/params  (13.1) ─────────────────────────────────────────
+
+async fn inference_params_get(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let s = state.inference_state.lock().unwrap();
+    Json(json!({
+        "temperature":        s.current.temperature,
+        "top_k":              s.current.top_k,
+        "intent_code":        s.current.intent_code,
+        "modulation_active":  s.modulation_active,
+        "modulation_count":   s.modulation_count,
+    }))
+}
+
+// ── GET /v1/coherence  (13.3) ─────────────────────────────────────────────────
+
+async fn coherence_get(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let s = state.coherence_state.lock().unwrap();
+    Json(json!({
+        "kappa":          s.kappa,
+        "mlr_triggered":  s.mlr_triggered,
+        "mlr_count":      s.mlr_count,
+        "last_audit_ms":  s.last_audit_ms,
+        "threshold":      0.92,
+    }))
+}
+
+// ── POST /v1/rules/simulate  (15.3) ──────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct SimulateRequest {
+    /// Metric values to evaluate against rules.toml.
+    metrics: std::collections::HashMap<String, f64>,
+}
+
+async fn rules_simulate(
+    State(state): State<AppState>,
+    Json(req): Json<SimulateRequest>,
+) -> impl IntoResponse {
+    // Build a synthetic snapshot from the supplied metrics and run the
+    // compression engine's rule evaluator against it.
+    use chrono::Utc;
+    use veyn_schemas::StateDelta;
+
+    let now = Utc::now().timestamp_millis();
+    let deltas: Vec<StateDelta> = req
+        .metrics
+        .iter()
+        .map(|(k, v)| StateDelta {
+            device_id: "simulate".to_string(),
+            metric: k.clone(),
+            value: *v,
+            unit: "".to_string(),
+            ts: now,
+            source_class: "simulate".to_string(),
+        })
+        .collect();
+
+    // Evaluate rules using the shared compression engine.
+    let rules_path = state.config.rules_path.clone();
+    let (intent, intent_code, confidence) =
+        crate::compression::evaluate_rules_from_path(&rules_path, &deltas);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "intent":      intent,
+            "intent_code": format!("{:?}", intent_code).to_lowercase(),
+            "confidence":  confidence,
+            "metrics":     req.metrics,
+        })),
+    )
+}
+
+// ── GET /v1/export?since=<ms>&until=<ms>  (16.1) ─────────────────────────────
+
+#[derive(Deserialize)]
+struct ExportAllParams {
+    since: Option<i64>,
+    until: Option<i64>,
+    #[serde(default = "default_export_limit")]
+    limit: usize,
+}
+
+fn default_export_limit() -> usize {
+    10_000
+}
+
+async fn export_all(
+    State(state): State<AppState>,
+    Query(params): Query<ExportAllParams>,
+) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            let since = params.since.unwrap_or(i64::MIN);
+            let until = params.until.unwrap_or(i64::MAX);
+            let limit = params.limit as i64;
+            let mut stmt = match conn.prepare(
+                "SELECT ts, device_id, metric, value, unit, source
+                 FROM events
+                 WHERE ts >= ?1 AND ts <= ?2
+                 ORDER BY ts ASC LIMIT ?3",
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": e.to_string() })),
+                    )
+                        .into_response()
+                }
+            };
+            let rows: Vec<serde_json::Value> = stmt
+                .query_map(rusqlite::params![since, until, limit], |row| {
+                    Ok(json!({
+                        "ts":        row.get::<_, i64>(0)?,
+                        "device_id": row.get::<_, String>(1)?,
+                        "metric":    row.get::<_, String>(2)?,
+                        "value":     row.get::<_, f64>(3)?,
+                        "unit":      row.get::<_, String>(4)?,
+                        "source":    row.get::<_, String>(5)?,
+                    }))
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default();
+
+            let count = rows.len();
+            (
+                StatusCode::OK,
+                Json(json!({ "events": rows, "count": count, "since": since, "until": until })),
+            )
+                .into_response()
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/sessions/compare?ids=a,b  (16.1) ─────────────────────────────────
+
+#[derive(Deserialize)]
+struct SessionsCompareParams {
+    /// Comma-separated list of session IDs to compare.
+    ids: String,
+}
+
+async fn sessions_compare(
+    State(state): State<AppState>,
+    Query(params): Query<SessionsCompareParams>,
+) -> impl IntoResponse {
+    let ids: Vec<&str> = params.ids.split(',').map(str::trim).collect();
+    if ids.is_empty() || ids.len() > 10 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "provide 1–10 session IDs in ?ids=a,b,c" })),
+        )
+            .into_response();
+    }
+
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            let mut result = serde_json::Map::new();
+            for id in ids {
+                match crate::storage::export_session_csv(&conn, id) {
+                    Ok(csv) => {
+                        result.insert(id.to_string(), serde_json::Value::String(csv));
+                    }
+                    Err(e) => {
+                        result.insert(id.to_string(), json!({ "error": e.to_string() }));
+                    }
+                }
+            }
+            (StatusCode::OK, Json(serde_json::Value::Object(result))).into_response()
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "persistence not available" })),
+        )
+            .into_response(),
+    }
+}
+
+// ── GET /v1/baseline/summary  (16.2) ─────────────────────────────────────────
+
+async fn baseline_summary(State(state): State<AppState>) -> impl IntoResponse {
+    match &state.db {
+        Some(db) => {
+            let conn = db.lock().unwrap();
+            // Compute 7-day vs 30-day mean per (device_id, metric) pair.
+            let pairs: Vec<(String, String)> = {
+                match conn.prepare("SELECT DISTINCT device_id, metric FROM baseline_samples") {
+                    Ok(mut stmt) => stmt
+                        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                        .unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                }
+            };
+
+            let mut summary = Vec::new();
+            for (dev, met) in &pairs {
+                let d7 =
+                    crate::storage::load_baseline_samples(&conn, dev, met, 7).unwrap_or_default();
+                let d30 =
+                    crate::storage::load_baseline_samples(&conn, dev, met, 30).unwrap_or_default();
+
+                let mean7 = if d7.is_empty() {
+                    None
+                } else {
+                    Some(d7.iter().sum::<f64>() / d7.len() as f64)
+                };
+                let mean30 = if d30.is_empty() {
+                    None
+                } else {
+                    Some(d30.iter().sum::<f64>() / d30.len() as f64)
+                };
+
+                let drift_sigma = match (mean7, mean30) {
+                    (Some(m7), Some(m30)) if m30 != 0.0 => {
+                        let std30: f64 = {
+                            let var = d30.iter().map(|v| (v - m30).powi(2)).sum::<f64>()
+                                / d30.len() as f64;
+                            var.sqrt()
+                        };
+                        if std30 > 0.0 {
+                            Some((m7 - m30) / std30)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                summary.push(json!({
+                    "device_id":   dev,
+                    "metric":      met,
+                    "mean_7d":     mean7,
+                    "mean_30d":    mean30,
+                    "drift_sigma": drift_sigma,
+                    "samples_7d":  d7.len(),
+                    "samples_30d": d30.len(),
+                }));
+            }
+
+            (
+                StatusCode::OK,
+                Json(json!({ "summary": summary, "count": summary.len() })),
+            )
+                .into_response()
         }
         None => (
             StatusCode::SERVICE_UNAVAILABLE,

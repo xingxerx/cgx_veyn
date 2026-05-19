@@ -1,9 +1,11 @@
 mod api;
 mod auth;
 mod baseline;
+mod coherence;
 mod compression;
 mod config;
 mod dispatcher;
+mod inference;
 mod memory;
 mod presence;
 mod session;
@@ -279,6 +281,39 @@ async fn main() -> Result<()> {
         });
     }
 
+    // 13.1 — Inference hyperparameter modulation.
+    {
+        let inf_rx = state.context_broadcast_tx.subscribe();
+        let inf_state = state.inference_state.clone();
+        let ollama_url =
+            std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+        tokio::spawn(async move {
+            inference::run_modulator(inf_rx, inf_state, ollama_url).await;
+        });
+        info!("inference hyperparameter modulator started");
+    }
+
+    // 13.3 — DGK-IES coherence audit.
+    if let Some(ref db_arc) = state.db {
+        let coh_db = db_arc.clone();
+        let coh_state = state.coherence_state.clone();
+        let coh_tx = state.context_broadcast_tx.clone();
+        tokio::spawn(async move {
+            coherence::run_coherence_audit(coh_db, coh_state, coh_tx).await;
+        });
+        info!("DGK-IES coherence audit started (threshold κ=0.92)");
+    }
+
+    // 16.2 — Baseline drift monitor (emits context_degraded SSE when 7d deviates > 1.5σ from 30d).
+    if let Some(ref db_arc) = state.db {
+        let drift_db = db_arc.clone();
+        let drift_tx = state.context_broadcast_tx.clone();
+        tokio::spawn(async move {
+            baseline_drift_monitor(drift_db, drift_tx).await;
+        });
+        info!("baseline drift monitor started");
+    }
+
     // Ambient memory writer.
     if cfg.memory_enabled {
         if let Some(ref db_arc) = state.db {
@@ -505,6 +540,98 @@ fn spawn_adapter<A: VeynAdapter + 'static>(
             }
         }
     });
+}
+
+/// 16.2 — Periodically scan baseline_samples for per-(device,metric) pairs where
+/// the 7-day mean has drifted > 1.5σ from the 30-day mean, and broadcast a
+/// synthetic `ContextSnapshot` marked with `IntentCode::Other("baseline_drift")`.
+/// The SSE subscriber rewrites the event name to `baseline_drift`.
+async fn baseline_drift_monitor(
+    db: std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>,
+    tx: tokio::sync::broadcast::Sender<veyn_schemas::ContextSnapshot>,
+) {
+    use std::collections::HashMap;
+    use veyn_schemas::{ContextSnapshot, IntentCode};
+
+    const INTERVAL: Duration = Duration::from_secs(15 * 60);
+    const SIGMA_THRESHOLD: f64 = 1.5;
+
+    let mut ticker = tokio::time::interval(INTERVAL);
+    ticker.tick().await; // skip immediate first tick
+
+    loop {
+        ticker.tick().await;
+
+        let mut drifted: Vec<(String, String, f64)> = Vec::new();
+        {
+            let conn = match db.lock() {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("baseline_drift_monitor: db lock poisoned: {e}");
+                    continue;
+                }
+            };
+            let pairs: Vec<(String, String)> =
+                match conn.prepare("SELECT DISTINCT device_id, metric FROM baseline_samples") {
+                    Ok(mut stmt) => stmt
+                        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                        .unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                };
+
+            for (dev, met) in pairs {
+                let d7 =
+                    crate::storage::load_baseline_samples(&conn, &dev, &met, 7).unwrap_or_default();
+                let d30 = crate::storage::load_baseline_samples(&conn, &dev, &met, 30)
+                    .unwrap_or_default();
+                if d7.is_empty() || d30.len() < 10 {
+                    continue;
+                }
+                let mean7 = d7.iter().sum::<f64>() / d7.len() as f64;
+                let mean30 = d30.iter().sum::<f64>() / d30.len() as f64;
+                let var30 =
+                    d30.iter().map(|v| (v - mean30).powi(2)).sum::<f64>() / d30.len() as f64;
+                let std30 = var30.sqrt();
+                if std30 <= 0.0 {
+                    continue;
+                }
+                let sigma = (mean7 - mean30) / std30;
+                if sigma.abs() >= SIGMA_THRESHOLD {
+                    drifted.push((dev, met, sigma));
+                }
+            }
+        }
+
+        if drifted.is_empty() {
+            continue;
+        }
+
+        let mut deltas: HashMap<String, f64> = HashMap::new();
+        let mut summary_parts: Vec<String> = Vec::with_capacity(drifted.len());
+        for (dev, met, sigma) in &drifted {
+            deltas.insert(format!("{dev}.{met}.drift_sigma"), *sigma);
+            summary_parts.push(format!("{met}@{dev}={sigma:+.2}σ"));
+        }
+        let snapshot = ContextSnapshot {
+            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+            session_id: String::new(),
+            intent: format!("baseline_drift: {}", summary_parts.join(", ")),
+            intent_code: IntentCode::Other("baseline_drift".to_string()),
+            confidence: 1.0,
+            intent_confidence: 1.0,
+            active_devices: Vec::new(),
+            state_deltas: Vec::new(),
+            baseline_delta: Some(deltas),
+            recording_session_id: None,
+            temporal_patterns: Vec::new(),
+        };
+        info!(
+            count = drifted.len(),
+            "baseline drift detected — broadcasting baseline_drift snapshot"
+        );
+        let _ = tx.send(snapshot);
+    }
 }
 
 async fn sigterm() {

@@ -1,12 +1,26 @@
+## Phase 13 — Inference Modulation & Governance (DGK-IES) ✅ COMPLETE
+
+All items implemented, tested, and committed as `f5548b2`.
+
 1. ~~Implement `MemoryStore::get` and `MemoryStore::delete` in `veyn-core/src/memory.rs`~~  ✅
-   - ~~Add SQL queries to `get_memory_by_id` and `delete_memory_by_id`~~
-   - ~~Update `MemoryStore` struct with `get` and `delete` methods calling the SQL queries.~~
 2. ~~Implement `GET /v1/memory/{id}` and `DELETE /v1/memory/{id}` endpoints in `veyn-core/src/api/routes.rs`~~  ✅
-   - ~~Add handler functions `memory_get` and `memory_delete` using axum routing.~~
-   - ~~Register the endpoints in the version 1 (`v1`) routes.~~
-3. ~~Complete pre commit steps~~  ✅
-   - ~~Added unit tests: `get_memory_by_id_roundtrip` and `delete_memory_by_id_roundtrip` in `memory.rs`~~
-   - ~~Added integration tests: `memory_get_by_id_returns_record` and `memory_delete_record_serialises` in `integration.rs`~~
-   - ~~All 70 workspace tests passing (50 unit + 18 integration + 2 insight).~~
-4. Submit the change.
-   - Once all tests pass, submit the change with a descriptive commit message.
+3. ~~Complete pre commit steps~~  ✅ (70 tests passing)
+4. ~~Submit the change~~  ✅ (committed `f5548b2`)
+
+---
+
+## Next: Phase 14 — Body-Aware Computing Layer
+
+According to TODO.md build order: **11 → 12 → 13 ✅ → 14 → 15 → 16 → 17**
+
+### 14.1 Multi-client subscription layer
+- Add `client_id` tracking — route `/v1/clients` already scaffolded
+- Namespaced filter DSLs for concurrent local apps
+- Need: per-client state tracking with connect/disconnect lifecycle
+
+### 14.2 Adaptive AI agent integration
+- `veyn_suggest_action` MCP tool (validates proposed actions against current physiology)
+- `context_degraded` SSE fallback events — already implemented in SSE handler
+
+### 14.3 Ambient state broadcast
+- Loopback-only auth-less SSE — already implemented in `context_broadcast` handler
