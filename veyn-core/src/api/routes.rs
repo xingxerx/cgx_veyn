@@ -1188,7 +1188,9 @@ async fn memory_get(State(state): State<AppState>, Path(id): Path<String>) -> im
             let store =
                 crate::memory::MemoryStore::new(db.clone(), state.config.memory_max_records);
             match store.get(&id) {
-                Ok(Some(record)) => (StatusCode::OK, Json(serde_json::to_value(&record).unwrap())).into_response(),
+                Ok(Some(record)) => {
+                    (StatusCode::OK, Json(serde_json::to_value(&record).unwrap())).into_response()
+                }
                 Ok(None) => (
                     StatusCode::NOT_FOUND,
                     Json(json!({ "error": "record not found" })),
