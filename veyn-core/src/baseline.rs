@@ -170,14 +170,14 @@ mod tests {
     }
 
     #[test]
-    fn stats_available_above_min_samples() {
+    fn stats_available_above_min_samples() -> Result<(), &'static str> {
         let eng = engine_with_samples(MIN_SAMPLES + 10);
         let stats = eng.get_stats("dev", "heart_rate");
-        assert!(stats.is_some());
-        let s = stats.unwrap();
+        let s = stats.ok_or("stats missing")?;
         assert!(s.mean > 0.0);
         assert!(s.stddev > 0.0);
         assert!(s.p10 <= s.p90);
+        Ok(())
     }
 
     #[test]
