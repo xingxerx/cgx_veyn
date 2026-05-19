@@ -428,4 +428,33 @@ mod tests {
         let req = Request::builder().body(axum::body::Body::empty()).unwrap();
         assert_eq!(extract_token(&req), None);
     }
+
+    #[test]
+    fn append_audit_log_creates_file_and_appends() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("audit.log");
+        let path_str = log_path.to_str().unwrap();
+
+        append_audit_log(Some(path_str), "test entry 1");
+        let content1 = fs::read_to_string(&log_path).unwrap();
+        assert!(content1.contains("test entry 1\n"));
+
+        // Append a second entry
+        append_audit_log(Some(path_str), "test entry 2");
+        let content2 = fs::read_to_string(&log_path).unwrap();
+        assert!(content2.contains("test entry 1\n"));
+        assert!(content2.contains("test entry 2\n"));
+        assert_eq!(content2.lines().count(), 2);
+    }
+
+    #[test]
+    fn append_audit_log_creates_missing_directories() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("nested").join("dir").join("audit.log");
+        let path_str = log_path.to_str().unwrap();
+
+        append_audit_log(Some(path_str), "test entry in nested dir");
+        let content = fs::read_to_string(&log_path).unwrap();
+        assert!(content.contains("test entry in nested dir\n"));
+    }
 }
