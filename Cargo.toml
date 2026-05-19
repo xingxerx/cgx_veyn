@@ -16,3 +16,4 @@ clap       = { version = "4",    features = ["derive", "env"] }
 rand       = "0.8"
 toml       = "0.8"
 reqwest    = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+libc = "0.2"
