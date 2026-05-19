@@ -88,9 +88,9 @@ impl BaselineEngine {
             // Find any key that matches this metric (device_id may vary).
             for ((dev, met), deque) in &self.samples {
                 if met == metric && deque.len() >= MIN_SAMPLES {
-                    let stats = compute_stats(deque);
-                    if stats.stddev > 0.0 {
-                        let z = (value - stats.mean) / stats.stddev;
+                    let (mean, stddev) = compute_mean_stddev(deque);
+                    if stddev > 0.0 {
+                        let z = (value - mean) / stddev;
                         out.insert(format!("{dev}:{met}"), z);
                         // Also insert bare metric name for easy rule matching.
                         out.entry(metric.clone()).or_insert(z);
@@ -118,11 +118,17 @@ struct Stats {
     p90: f64,
 }
 
-fn compute_stats(deque: &VecDeque<f64>) -> Stats {
+#[inline]
+fn compute_mean_stddev(deque: &VecDeque<f64>) -> (f64, f64) {
     let n = deque.len() as f64;
     let mean = deque.iter().sum::<f64>() / n;
     let variance = deque.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
     let stddev = variance.sqrt();
+    (mean, stddev)
+}
+
+fn compute_stats(deque: &VecDeque<f64>) -> Stats {
+    let (mean, stddev) = compute_mean_stddev(deque);
 
     // Sort a copy for quantiles.
     let mut sorted: Vec<f64> = deque.iter().copied().collect();
