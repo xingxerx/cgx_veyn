@@ -20,8 +20,7 @@ use veyn_schemas::ContextSnapshot;
 /// Run the OSC output adapter.  Sends context snapshots as OSC messages to the
 /// given `host:port` destination.
 pub async fn run(mut rx: broadcast::Receiver<ContextSnapshot>, dest: String) -> Result<()> {
-    let sock =
-        UdpSocket::bind("0.0.0.0:0").context("OSC output: bind ephemeral UDP")?;
+    let sock = UdpSocket::bind("0.0.0.0:0").context("OSC output: bind ephemeral UDP")?;
     info!(dest = %dest, "OSC output adapter started");
 
     loop {

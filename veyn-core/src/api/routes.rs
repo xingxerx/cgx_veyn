@@ -410,7 +410,6 @@ where
     }
 }
 
-
 fn intent_code_str(code: &IntentCode) -> &str {
     match code {
         IntentCode::Neutral => "neutral",
@@ -537,7 +536,12 @@ impl WsContextFilter {
     }
 }
 
-async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier, client_id: String) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    state: AppState,
+    tier: ContextTier,
+    client_id: String,
+) {
     let mut rx = state.broadcast_tx.subscribe();
     let mut cx_rx = state.context_broadcast_tx.subscribe();
     let mut filter = WsEventFilter::default();
@@ -559,7 +563,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, tier: ContextTier
             transport: "websocket".to_string(),
             source_filter: None,
         };
-        state.connected_clients.lock().unwrap().insert(client_id.clone(), info);
+        state
+            .connected_clients
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), info);
     }
 
     // For Semantic tier, replay the latest context snapshot instead of raw events.

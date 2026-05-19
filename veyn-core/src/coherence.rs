@@ -50,7 +50,10 @@ fn compute_kappa(conn: &Connection) -> anyhow::Result<f64> {
 
     let rows: Vec<(Option<f64>, Option<String>)> = stmt
         .query_map([AUDIT_WINDOW as i64], |row| {
-            Ok((row.get::<_, Option<f64>>(0)?, row.get::<_, Option<String>>(1)?))
+            Ok((
+                row.get::<_, Option<f64>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+            ))
         })?
         .filter_map(|r| r.ok())
         .collect();
@@ -59,10 +62,13 @@ fn compute_kappa(conn: &Connection) -> anyhow::Result<f64> {
         return Ok(1.0); // no data → assume coherent
     }
 
-    let coherent = rows.iter().filter(|(conf, intent)| {
-        intent.as_deref().map(|i| !i.is_empty()).unwrap_or(false)
-            && conf.map(|c| c >= 0.5).unwrap_or(false)
-    }).count();
+    let coherent = rows
+        .iter()
+        .filter(|(conf, intent)| {
+            intent.as_deref().map(|i| !i.is_empty()).unwrap_or(false)
+                && conf.map(|c| c >= 0.5).unwrap_or(false)
+        })
+        .count();
 
     Ok(coherent as f64 / rows.len() as f64)
 }
