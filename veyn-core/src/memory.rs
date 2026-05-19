@@ -27,7 +27,10 @@ impl MemoryStore {
     }
 
     pub fn write(&self, record: MemoryRecord) -> Result<()> {
-        let conn = self.db.lock().unwrap();
+        let conn = self
+            .db
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {}", e))?;
         write_memory(&conn, &record)?;
 
         // Prune oldest ambient records when the cap is exceeded; semantic records are never pruned.
@@ -45,17 +48,26 @@ impl MemoryStore {
     }
 
     pub fn query(&self, q: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
-        let conn = self.db.lock().unwrap();
+        let conn = self
+            .db
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {}", e))?;
         query_memory(&conn, q)
     }
 
     pub fn get(&self, id: &str) -> Result<Option<MemoryRecord>> {
-        let conn = self.db.lock().unwrap();
+        let conn = self
+            .db
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {}", e))?;
         get_memory_by_id(&conn, id)
     }
 
     pub fn delete(&self, id: &str) -> Result<bool> {
-        let conn = self.db.lock().unwrap();
+        let conn = self
+            .db
+            .lock()
+            .map_err(|e| anyhow::anyhow!("mutex poisoned: {}", e))?;
         delete_memory_by_id(&conn, id)
     }
 
