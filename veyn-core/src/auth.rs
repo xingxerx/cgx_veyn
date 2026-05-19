@@ -387,8 +387,10 @@ mod tests {
             scopes: vec!["source:ble".to_string(), "source:midi".to_string()],
         };
         assert!(!tok.is_read_only());
-        let sources = tok.allowed_sources().unwrap();
-        assert_eq!(sources, vec!["ble", "midi"]);
+        assert_eq!(
+            tok.allowed_sources(),
+            Some(vec!["ble".to_string(), "midi".to_string()])
+        );
     }
 
     #[test]
