@@ -111,7 +111,15 @@ pub fn load_or_create_token(custom_path: Option<&str>) -> Result<String> {
     if dir.exists() {
         verify_dir_ownership(&dir)?;
     } else {
-        fs::create_dir_all(&dir)
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder
+            .create(&dir)
             .with_context(|| format!("create token directory {}", dir.display()))?;
     }
 
@@ -467,5 +475,52 @@ mod tests {
         append_audit_log(Some(path_str), "test entry in nested dir");
         let content = fs::read_to_string(&log_path).unwrap();
         assert!(content.contains("test entry in nested dir\n"));
+    }
+
+    #[test]
+    fn load_or_create_token_creates_new() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token");
+        let token_path_str = token_path.to_str().unwrap();
+
+        assert!(!token_path.exists());
+        let token1 = load_or_create_token(Some(token_path_str)).unwrap();
+        assert!(!token1.is_empty());
+        assert!(token_path.exists());
+
+        // Calling it again should return the same token
+        let token2 = load_or_create_token(Some(token_path_str)).unwrap();
+        assert_eq!(token1, token2);
+    }
+
+    #[test]
+    fn load_or_create_token_directory_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token_dir");
+        fs::create_dir(&token_path).unwrap();
+
+        let token_path_str = token_path.to_str().unwrap();
+        let result = load_or_create_token(Some(token_path_str));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn load_or_create_token_unsafe_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token");
+        let token_path_str = token_path.to_str().unwrap();
+
+        let _token1 = load_or_create_token(Some(token_path_str)).unwrap();
+
+        fs::set_permissions(&token_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let result = load_or_create_token(Some(token_path_str));
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("unsafe permissions"));
     }
 }
