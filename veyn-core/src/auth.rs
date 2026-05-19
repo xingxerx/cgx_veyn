@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use crate::api::state::AppState;
 use crate::config::{parse_context_tier, ContextTier};
 
-// ── Token path ────────────────────────────────────────────────────────────────
+// ── Token path ─────────────────────────────────────────────────────────────
 
 pub fn token_dir() -> PathBuf {
     std::env::var("XDG_DATA_HOME")
@@ -39,7 +39,7 @@ pub fn scoped_tokens_path() -> PathBuf {
     token_dir().join("tokens.json")
 }
 
-// ── Scope-limited tokens ──────────────────────────────────────────────────────
+// ── Scope-limited tokens ─────────────────────────────────────────────────────
 
 /// A token with an associated permission scope set.
 ///
@@ -98,7 +98,7 @@ pub struct TokenClaim {
     pub tier_ceiling: Option<ContextTier>,
 }
 
-// ── Token load/create ─────────────────────────────────────────────────────────
+// ── Token load/create ───────────────────────────────────────────────────────
 
 /// Load the primary full-access token, creating it if it doesn't exist.
 pub fn load_or_create_token(custom_path: Option<&str>) -> Result<String> {
@@ -172,13 +172,9 @@ fn write_token(path: &Path, token: &str) -> Result<()> {
 
 #[cfg(unix)]
 fn current_uid() -> Option<u32> {
-    let status = fs::read_to_string("/proc/self/status").ok()?;
-    for line in status.lines() {
-        if let Some(rest) = line.strip_prefix("Uid:\t") {
-            return rest.split_whitespace().next()?.parse().ok();
-        }
-    }
-    None
+    // Use libc to get the effective user id on Unix-like platforms (Linux, macOS).
+    // This avoids relying on /proc which is Linux-only.
+    Some(unsafe { libc::geteuid() } as u32)
 }
 
 #[cfg(unix)]
@@ -237,7 +233,7 @@ fn verify_file_ownership(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-// ── Middleware ────────────────────────────────────────────────────────────────
+// ── Middleware ─────────────────────────────────────────────────────────────
 
 /// Enforce `Authorization: Bearer <token>` on every request.
 /// Bypassed when `require_auth = false` in config (dev/--no-auth mode).
@@ -345,7 +341,7 @@ fn extract_token(req: &Request) -> Option<String> {
         .map(str::to_string)
 }
 
-// ── Audit log ─────────────────────────────────────────────────────────────────
+// ── Audit log ──────────────────────────────────────────────────────────────
 
 pub fn append_audit_log(path: Option<&str>, entry: &str) {
     let path = path
@@ -362,7 +358,7 @@ pub fn append_audit_log(path: Option<&str>, entry: &str) {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
