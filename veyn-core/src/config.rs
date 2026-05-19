@@ -432,3 +432,238 @@ pub fn parse_context_tier(s: &str) -> ContextTier {
         _ => ContextTier::Semantic,
     }
 }
+
+#[cfg(test)]
+#[allow(deprecated)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::io::Write;
+    use std::sync::Mutex;
+    use tempfile::NamedTempFile;
+
+    // Environment variables are global state and tests run concurrently by default.
+    // Instead of using global env modifications which lead to flaky tests, we use
+    // a mock lock to serialize env-var testing.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn run_isolated<F>(test: F)
+    where
+        F: FnOnce(),
+    {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        // Clean environment
+        let keys = vec![
+            "VEYN_PORT",
+            "VEYN_HK_PORT",
+            "VEYN_MOCK",
+            "VEYN_BLE",
+            "VEYN_EEG",
+            "VEYN_OSC_PORT",
+            "VEYN_LOG",
+            "VEYN_PLUGINS_DIR",
+            "VEYN_MQTT_URL",
+            "VEYN_PRESENCE_TIMEOUT",
+            "VEYN_NO_AUTH",
+            "VEYN_CONTEXT_TIER",
+        ];
+        for k in &keys {
+            env::remove_var(k);
+        }
+        test();
+        for k in &keys {
+            env::remove_var(k);
+        }
+    }
+
+    #[test]
+    fn test_default_config() {
+        run_isolated(|| {
+            let config = load(None, None, false).unwrap();
+            assert_eq!(config.api_port, 7700);
+            assert_eq!(config.healthkit_port, 7701);
+            assert!(!config.mock_mode);
+            assert!(!config.ble_enabled);
+            assert!(config.require_auth);
+            assert_eq!(config.context_tier, ContextTier::Semantic);
+            assert!(config.memory_enabled);
+        });
+    }
+
+    #[test]
+    fn test_load_from_toml() {
+        run_isolated(|| {
+            let mut file = NamedTempFile::new().unwrap();
+            writeln!(
+                file,
+                r#"
+[server]
+port = 8800
+healthkit_port = 8801
+
+[security]
+require_auth = false
+token_path = "/tmp/token"
+cors_origins = ["http://localhost:3000"]
+audit_log_path = "/tmp/audit.log"
+strip_raw_hid = false
+rate_limit_rps = 200
+
+[adapters]
+mock = true
+ble = true
+eeg = true
+osc_port = 9001
+evdev = true
+hidraw = true
+midi = true
+serial_port = "/dev/ttyUSB0"
+serial_baud = 9600
+fs_watch_paths = ["/tmp/watch"]
+
+[logging]
+jsonl_path = "/tmp/logs.jsonl"
+db_path = "/tmp/veyn.db"
+level = "debug"
+
+[plugins]
+dir = "/tmp/plugins"
+
+[mqtt]
+url = "mqtt://localhost:1883"
+
+[presence]
+timeout_secs = 60
+
+[compression]
+rules_path = "/tmp/rules.toml"
+context_history_size = 64
+debounce_ms = {{ heart_rate = 2000 }}
+epsilons = {{ heart_rate = 0.5 }}
+context_tier = "filtered"
+
+[memory]
+enabled = false
+ambient_interval_secs = 600
+max_records = 5000
+"#
+            )
+            .unwrap();
+
+            let config = load(Some(file.path().to_str().unwrap()), None, false).unwrap();
+
+            assert_eq!(config.api_port, 8800);
+            assert_eq!(config.healthkit_port, 8801);
+            assert!(!config.require_auth);
+            assert_eq!(config.token_path, Some("/tmp/token".to_string()));
+            assert_eq!(
+                config.cors_origins,
+                vec!["http://localhost:3000".to_string()]
+            );
+            assert_eq!(config.audit_log_path, Some("/tmp/audit.log".to_string()));
+            assert!(!config.strip_raw_hid);
+            assert_eq!(config.rate_limit_rps, Some(200));
+
+            assert!(config.mock_mode);
+            assert!(config.ble_enabled);
+            assert!(config.eeg_enabled);
+            assert_eq!(config.osc_port, 9001);
+            assert!(config.evdev_enabled);
+            assert!(config.hidraw_enabled);
+            assert!(config.midi_enabled);
+            assert_eq!(config.serial_port, Some("/dev/ttyUSB0".to_string()));
+            assert_eq!(config.serial_baud, 9600);
+            assert_eq!(config.fs_watch_paths, vec!["/tmp/watch".to_string()]);
+
+            assert_eq!(config.jsonl_path, "/tmp/logs.jsonl".to_string());
+            assert_eq!(config.db_path, "/tmp/veyn.db".to_string());
+            assert_eq!(config.log_level, "debug".to_string());
+
+            assert_eq!(config.plugins_dir, "/tmp/plugins".to_string());
+            assert_eq!(config.mqtt_url, Some("mqtt://localhost:1883".to_string()));
+            assert_eq!(config.presence_timeout_secs, 60);
+
+            assert_eq!(config.rules_path, "/tmp/rules.toml".to_string());
+            assert_eq!(config.context_history_size, 64);
+            assert_eq!(config.debounce_ms.get("heart_rate"), Some(&2000));
+            assert_eq!(config.epsilons.get("heart_rate"), Some(&0.5));
+            assert_eq!(config.context_tier, ContextTier::Filtered);
+
+            assert!(!config.memory_enabled);
+            assert_eq!(config.memory_ambient_interval_secs, 600);
+            assert_eq!(config.memory_max_records, 5000);
+        });
+    }
+
+    #[test]
+    fn test_env_vars_override() {
+        run_isolated(|| {
+            env::set_var("VEYN_PORT", "9900");
+            env::set_var("VEYN_HK_PORT", "9901");
+            env::set_var("VEYN_MOCK", "true");
+            env::set_var("VEYN_BLE", "1");
+            env::set_var("VEYN_EEG", "yes");
+            env::set_var("VEYN_OSC_PORT", "9902");
+            env::set_var("VEYN_LOG", "/env/logs.jsonl");
+            env::set_var("VEYN_PLUGINS_DIR", "/env/plugins");
+            env::set_var("VEYN_MQTT_URL", "mqtt://env");
+            env::set_var("VEYN_PRESENCE_TIMEOUT", "120");
+            env::set_var("VEYN_NO_AUTH", "true");
+            env::set_var("VEYN_CONTEXT_TIER", "raw");
+
+            let config = load(None, None, false).unwrap();
+
+            assert_eq!(config.api_port, 9900);
+            assert_eq!(config.healthkit_port, 9901);
+            assert!(config.mock_mode);
+            assert!(config.ble_enabled);
+            assert!(config.eeg_enabled);
+            assert_eq!(config.osc_port, 9902);
+            assert_eq!(config.jsonl_path, "/env/logs.jsonl".to_string());
+            assert_eq!(config.plugins_dir, "/env/plugins".to_string());
+            assert_eq!(config.mqtt_url, Some("mqtt://env".to_string()));
+            assert_eq!(config.presence_timeout_secs, 120);
+            assert!(!config.require_auth);
+            assert_eq!(config.context_tier, ContextTier::Raw);
+        });
+    }
+
+    #[test]
+    fn test_cli_args_override() {
+        run_isolated(|| {
+            env::set_var("VEYN_PORT", "9900");
+            env::set_var("VEYN_NO_AUTH", "false");
+
+            let mut file = NamedTempFile::new().unwrap();
+            writeln!(
+                file,
+                r#"
+[server]
+port = 8800
+[security]
+require_auth = true
+"#
+            )
+            .unwrap();
+
+            // CLI port 10000 should override env 9900 and toml 8800
+            // CLI no_auth true should override env false and toml true
+            let config = load(Some(file.path().to_str().unwrap()), Some(10000), true).unwrap();
+
+            assert_eq!(config.api_port, 10000);
+            assert!(!config.require_auth);
+        });
+    }
+
+    #[test]
+    fn test_parse_context_tier() {
+        assert_eq!(parse_context_tier("raw"), ContextTier::Raw);
+        assert_eq!(parse_context_tier("RAW"), ContextTier::Raw);
+        assert_eq!(parse_context_tier("filtered"), ContextTier::Filtered);
+        assert_eq!(parse_context_tier("FiLtErEd"), ContextTier::Filtered);
+        assert_eq!(parse_context_tier("semantic"), ContextTier::Semantic);
+        assert_eq!(parse_context_tier("unknown"), ContextTier::Semantic); // default
+        assert_eq!(parse_context_tier(""), ContextTier::Semantic); // default
+    }
+}
