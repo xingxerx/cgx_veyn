@@ -309,3 +309,38 @@ fn csv_field(s: &str) -> String {
         s.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_csv_field() {
+        // Normal string without special characters
+        assert_eq!(csv_field("hello"), "hello");
+        assert_eq!(csv_field("hello_world"), "hello_world");
+        assert_eq!(csv_field("123.45"), "123.45");
+
+        // Empty string
+        assert_eq!(csv_field(""), "");
+
+        // Strings with commas
+        assert_eq!(csv_field("hello, world"), "\"hello, world\"");
+        assert_eq!(csv_field(",start"), "\",start\"");
+        assert_eq!(csv_field("end,"), "\"end,\"");
+
+        // Strings with quotes
+        assert_eq!(csv_field("hello \"world\""), "\"hello \"\"world\"\"\"");
+        assert_eq!(csv_field("\"quotes\""), "\"\"\"quotes\"\"\"");
+        assert_eq!(csv_field("a\"b"), "\"a\"\"b\"");
+
+        // Strings with newlines
+        assert_eq!(csv_field("hello\nworld"), "\"hello\nworld\"");
+        assert_eq!(csv_field("\nstart"), "\"\nstart\"");
+        assert_eq!(csv_field("end\n"), "\"end\n\"");
+
+        // Complex combinations
+        assert_eq!(csv_field("a, b \"c\"\nd"), "\"a, b \"\"c\"\"\nd\"");
+        assert_eq!(csv_field("\",\n\""), "\"\"\",\n\"\"\"");
+    }
+}
