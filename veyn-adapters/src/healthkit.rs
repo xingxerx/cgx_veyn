@@ -76,7 +76,10 @@ async fn handle_companion(
                 Ok(notif) => {
                     let should_send = match &notif.target_device {
                         None => true,
-                        Some(target) => seen_write.lock().unwrap().contains(target),
+                        Some(target) => match seen_write.lock() {
+                            Ok(guard) => guard.contains(target),
+                            Err(_) => false,
+                        },
                     };
                     if !should_send {
                         continue;
@@ -104,7 +107,9 @@ async fn handle_companion(
     while let Ok(Some(line)) = lines.next_line().await {
         match serde_json::from_str::<VeynEvent>(&line) {
             Ok(event) => {
-                seen.lock().unwrap().insert(event.device_id.clone());
+                if let Ok(mut guard) = seen.lock() {
+                    guard.insert(event.device_id.clone());
+                }
                 if tx.send(event).await.is_err() {
                     break;
                 }
