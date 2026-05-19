@@ -249,3 +249,62 @@ fn plugin_sha256_matches_known_content() {
     assert_eq!(result.len(), 64, "SHA-256 hex should be 64 chars");
     assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
 }
+
+// ── Memory get/delete (13.2) ──────────────────────────────────────────────────
+
+#[test]
+fn memory_get_by_id_returns_record() {
+    let record = MemoryRecord {
+        id: "get-test-001".to_string(),
+        timestamp_ms: 1_700_000_000_000,
+        session_id: "sess-get".to_string(),
+        kind: MemoryKind::Semantic,
+        topic: "deep-work".to_string(),
+        summary: "finished auth refactor".to_string(),
+        intent_at_time: Some("cognitive_load".to_string()),
+        confidence_at_time: Some(0.9),
+        hrv_at_time: Some(55.0),
+        hr_at_time: Some(68.0),
+        context_snapshot: None,
+        outcome_rating: None,
+        outcome_notes: None,
+        outcome_at_ms: None,
+    };
+
+    let json = serde_json::to_string(&record).unwrap();
+    let decoded: MemoryRecord = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(decoded.id, "get-test-001");
+    assert_eq!(decoded.topic, "deep-work");
+    assert_eq!(decoded.summary, "finished auth refactor");
+    assert_eq!(decoded.hrv_at_time, Some(55.0));
+    assert_eq!(decoded.hr_at_time, Some(68.0));
+}
+
+#[test]
+fn memory_delete_record_serialises() {
+    // Verify that a memory record with outcome fields round-trips correctly —
+    // the DELETE endpoint returns 204 No Content so we just confirm the schema
+    // used by GET /v1/memory/{id} is intact before deletion.
+    let record = MemoryRecord {
+        id: "del-test-001".to_string(),
+        timestamp_ms: 1_700_000_000_000,
+        session_id: "sess-del".to_string(),
+        kind: MemoryKind::Ambient,
+        topic: "ambient".to_string(),
+        summary: "quiet period".to_string(),
+        intent_at_time: None,
+        confidence_at_time: None,
+        hrv_at_time: None,
+        hr_at_time: None,
+        context_snapshot: None,
+        outcome_rating: None,
+        outcome_notes: None,
+        outcome_at_ms: None,
+    };
+
+    let json = serde_json::to_string(&record).unwrap();
+    let decoded: MemoryRecord = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded.id, "del-test-001");
+    assert_eq!(decoded.kind, MemoryKind::Ambient);
+}

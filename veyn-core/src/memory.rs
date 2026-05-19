@@ -751,4 +751,76 @@ mod tests {
         .unwrap();
         assert_eq!(semantic.len(), 1, "semantic records must not be pruned");
     }
+
+    #[test]
+    fn get_memory_by_id_roundtrip() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::storage::open_connection(&conn).unwrap();
+
+        let record = MemoryRecord {
+            id: "get-1".to_string(),
+            timestamp_ms: 2_000_000,
+            session_id: "s".to_string(),
+            kind: MemoryKind::Semantic,
+            topic: "deep-work".to_string(),
+            summary: "focused session".to_string(),
+            intent_at_time: Some("cognitive_load".to_string()),
+            confidence_at_time: Some(0.91),
+            hrv_at_time: Some(48.0),
+            hr_at_time: Some(72.0),
+            context_snapshot: None,
+            outcome_rating: None,
+            outcome_notes: None,
+            outcome_at_ms: None,
+        };
+        write_memory(&conn, &record).unwrap();
+
+        // Get existing record.
+        let found = get_memory_by_id(&conn, "get-1").unwrap();
+        assert!(found.is_some(), "expected record to be found");
+        let found = found.unwrap();
+        assert_eq!(found.id, "get-1");
+        assert_eq!(found.topic, "deep-work");
+        assert_eq!(found.hrv_at_time, Some(48.0));
+
+        // Get nonexistent record.
+        let missing = get_memory_by_id(&conn, "nonexistent").unwrap();
+        assert!(missing.is_none(), "expected None for missing id");
+    }
+
+    #[test]
+    fn delete_memory_by_id_roundtrip() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::storage::open_connection(&conn).unwrap();
+
+        let record = MemoryRecord {
+            id: "del-1".to_string(),
+            timestamp_ms: 3_000_000,
+            session_id: "s".to_string(),
+            kind: MemoryKind::Ambient,
+            topic: "ambient".to_string(),
+            summary: "idle period".to_string(),
+            intent_at_time: None,
+            confidence_at_time: None,
+            hrv_at_time: None,
+            hr_at_time: None,
+            context_snapshot: None,
+            outcome_rating: None,
+            outcome_notes: None,
+            outcome_at_ms: None,
+        };
+        write_memory(&conn, &record).unwrap();
+
+        // Delete existing record.
+        let deleted = delete_memory_by_id(&conn, "del-1").unwrap();
+        assert!(deleted, "expected true for deleted record");
+
+        // Confirm it's gone.
+        let found = get_memory_by_id(&conn, "del-1").unwrap();
+        assert!(found.is_none(), "record should be gone after delete");
+
+        // Delete nonexistent record.
+        let deleted_again = delete_memory_by_id(&conn, "del-1").unwrap();
+        assert!(!deleted_again, "expected false for already-deleted record");
+    }
 }

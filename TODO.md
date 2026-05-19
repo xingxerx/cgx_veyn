@@ -54,9 +54,9 @@ Build order: **11 (Intero) → 12 (Somatic Shell) → 13 (Inference Gov) → 14 
 ## 13. 🔴 Critical: Inference Modulation & Governance (DGK-IES)
 > Delivers: deterministic AI safety · real-time hyperparameter scaling
 
-- [ ] **13.1 Direct Inference Hyperparameter Modulation**: Build a direct server-to-server connection to local inference engines (Ollama `/api/generate`). Dynamically scale model `temperature` and `top_k` down to `0.0` during `CognitiveLoad` or `StressResponse` states to enforce strictly factual, deterministic outputs.
-- [ ] **13.2 Memory Pruning Endpoints**: Implement `MemoryStore::get` and `MemoryStore::delete` in `veyn-core/src/memory.rs`. Expose `GET /v1/memory/{id}` and `DELETE /v1/memory/{id}` in `routes.rs` to allow agents to aggressively forget conflicting or hallucinated semantic states.
-- [ ] **13.3 Cryptographic Invariant Enforcement (DGK-IES)**: Implement the Coherence (κ) density audit hook. Continuously monitor semantic memory logs; if system entropy pushes κ below 0.92, trigger a Mandatory Logical Reset (MLR) that drops agent execution privileges immediately.
+- [x] **13.1 Direct Inference Hyperparameter Modulation**: Build a direct server-to-server connection to local inference engines (Ollama `/api/generate`). Dynamically scale model `temperature` and `top_k` down to `0.0` during `CognitiveLoad` or `StressResponse` states to enforce strictly factual, deterministic outputs.
+- [x] **13.2 Memory Pruning Endpoints**: Implement `MemoryStore::get` and `MemoryStore::delete` in `veyn-core/src/memory.rs`. Expose `GET /v1/memory/{id}` and `DELETE /v1/memory/{id}` in `routes.rs` to allow agents to aggressively forget conflicting or hallucinated semantic states.
+- [x] **13.3 Cryptographic Invariant Enforcement (DGK-IES)**: Implement the Coherence (κ) density audit hook. Continuously monitor semantic memory logs; if system entropy pushes κ below 0.92, trigger a Mandatory Logical Reset (MLR) that drops agent execution privileges immediately.
 
 ---
 
