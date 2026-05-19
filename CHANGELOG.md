@@ -23,6 +23,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - `POST /v1/memory` — writes a `Semantic` MemoryRecord, auto-attaches current
       physiological state (HR, HRV, intent, confidence) from latest context
     - `GET /v1/memory?topic=&since=&until=&kind=&limit=` — returns matching records
+    - `GET /v1/memory/{id}` — retrieve a single memory record by ID (optional feature)
+    - `DELETE /v1/memory/{id}` — remove a specific memory record (optional feature)
   - `[memory]` config section in `veyn.toml` / `veyn.toml.example`:
     `enabled` (default true), `ambient_interval_secs` (default 900),
     `max_records` (default 10 000)
@@ -45,6 +47,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     hot-reloadable `rules.toml` (no daemon restart required)
   - Output: structured `ContextSnapshot` with `intent`, `confidence`,
     `active_devices`, `state_deltas`, `timestamp_ms`, `session_id`
+  - Optional SLM integration: lightweight local language model (`llama.cpp` via FFI or subprocess) as secondary synthesis pass when `intent_confidence < 0.6`; gated behind `compression.use_slm = true` config flag
 
 - **Security hardening**
   - Token-based local auth: 256-bit random token generated on first run,

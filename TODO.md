@@ -16,7 +16,7 @@ unusable by any AI agent without compression and synthesis first.
 - [x] ✅ State Reduction Layer — delta filtering, temporal debounce, epsilon magnitude thresholds (`veyn-core/src/compression.rs`)
 - [x] ✅ Semantic Synthesis Engine — rule-based intent classification with hot-reloadable `rules.toml` (30 s interval, no restart required)
 - [x] ✅ `ContextSnapshot` output — `intent`, `confidence`, `active_devices`, `state_deltas`, `timestamp_ms`, `session_id`
-- [ ] 🟢 Optional: lightweight local SLM integration (e.g. `llama.cpp` via FFI or subprocess) as a secondary synthesis pass for ambiguous intent classification where `confidence < 0.6`
+- [x] ✅ 🟢 Optional: lightweight local SLM integration (e.g. `llama.cpp` via FFI or subprocess) as a secondary synthesis pass for ambiguous intent classification where `confidence < 0.6`
 
 -----
 
@@ -257,7 +257,7 @@ can pattern-match against reliably — not a string to parse.
 - [x] ✅ Update `rules.toml` semantic rules to set `intent_code` in addition to the existing `intent` string — rules file gains an optional `intent_code` field per rule; falls back to `IntentCode::Other(intent_string)` if not set
 - [x] ✅ Write deterministic unit tests for each `IntentCode` variant — inject synthetic `BaselineStats` and metric delta inputs; assert expected `intent_code` and `intent_confidence` range without live hardware
 - [x] ✅ Update `veyn-mcp` tool descriptions to document `intent_code` field in `veyn_get_context` response schema
-- [ ] 🟢 Optional secondary classification pass — if `intent_confidence < 0.6`, invoke a local SLM (`llama.cpp` via FFI or subprocess) with the current metric snapshot as a structured prompt; use the SLM output to override `intent_code` and raise `intent_confidence`; gate behind `compression.use_slm = true` config flag
+- [x] ✅ 🟢 Optional secondary classification pass — if `intent_confidence < 0.6`, invoke a local SLM (`llama.cpp` via FFI or subprocess) with the current metric snapshot as a structured prompt; use the SLM output to override `intent_code` and raise `intent_confidence`; gate behind `compression.use_slm = true` config flag
 
 -----
 
@@ -278,5 +278,5 @@ Cross-session physiological memory that lets AI sessions start pre-loaded with b
 - [x] ✅ MCP tool `veyn_recall_memory` (topic?, since?, kind?) — human-readable `since` ("7d", "24h", "30d") parsed to ms
 - [x] ✅ MCP session bootstrap: auto-recalls last 24 h of memory on every `initialize`, embeds in `serverInfo.context`
 - [x] ✅ Unit + integration tests: round-trips, kind filtering, ambient pruning, async writer firing
-- [ ] 🟢 Optional: expose `GET /v1/memory/{id}` single-record endpoint
-- [ ] 🟢 Optional: `DELETE /v1/memory/{id}` for agent-driven forgetting of a specific record
+- [x] ✅ 🟢 Optional: expose `GET /v1/memory/{id}` single-record endpoint
+- [x] ✅ 🟢 Optional: `DELETE /v1/memory/{id}` for agent-driven forgetting of a specific record
