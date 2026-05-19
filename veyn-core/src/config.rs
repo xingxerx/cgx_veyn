@@ -434,6 +434,7 @@ pub fn parse_context_tier(s: &str) -> ContextTier {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use std::env;
